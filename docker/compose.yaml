@@ -1,0 +1,30 @@
+# Managed by Hermes Portable Setup. Private data lives outside this source repo.
+name: hermes
+services:
+  webui:
+    image: ${WEBUI_IMAGE:-ghcr.io/nesquena/hermes-webui:latest}
+    container_name: hermes-webui
+    ports:
+      - "127.0.0.1:${WEBUI_PORT:-8787}:8787"
+    environment:
+      WANTED_UID: "${HERMES_UID}"
+      WANTED_GID: "${HERMES_GID}"
+      HERMES_HOME: /home/hermeswebui/.hermes
+      UV_PYTHON: "3.14"
+      HERMES_WEBUI_AUTO_INSTALL: "1"
+      HERMES_WEBUI_HOST: "0.0.0.0"
+      HERMES_WEBUI_PORT: "8787"
+      HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui
+      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
+    volumes:
+      - type: bind
+        source: ${HERMES_DATA_DIR}
+        target: /home/hermeswebui/.hermes
+      - type: bind
+        source: ${HERMES_AGENT_SRC}
+        target: /home/hermeswebui/.hermes/hermes-agent
+        read_only: true
+      - type: bind
+        source: ${HERMES_WORKSPACES}
+        target: /workspace
+    restart: unless-stopped
