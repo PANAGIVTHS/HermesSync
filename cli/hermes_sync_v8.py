@@ -103,7 +103,7 @@ class RichArgumentParser(argparse.ArgumentParser):
 
 class RichVersionAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
-        _write(("Hermes Sync", "bold bright_green"), (" v7", ""))
+        _write(("Hermes Sync", "bold bright_green"), (" v8", ""))
         parser.exit(0)
 
 BASE = Path(os.environ.get("HERMES_INSTALL_DIR", str(Path.home() / "Hermes"))).expanduser().resolve()
@@ -1082,10 +1082,88 @@ def do_recover(file: Path, state: dict):
     notice("Recovered pre-operation working copies.")
 
 
+def do_boot():
+    """Start the installed Docker Compose stack; independent of any sync project."""
+    compose = BASE / "compose.yaml"
+    if not compose.is_file() or compose.is_symlink():
+        raise SyncError(f"Docker setup not found at {compose}. Run the portable installer first.")
+    if not shutil.which("docker"):
+        raise SyncError("Docker is not installed or is missing from PATH.")
+
+    # Never accidentally take over another install's named container.
+    existing = subprocess.run(
+        ["docker", "inspect", "-f", '{{index .Config.Labels "com.docker.compose.project.working_dir"}}', "hermes-webui"],
+        capture_output=True, text=True,
+    )
+    if existing.returncode == 0:
+        origin = existing.stdout.strip()
+        if origin and origin != "<no value>" and Path(origin).resolve() != BASE:
+            raise SyncError(f"hermes-webui belongs to a different Compose project: {origin}")
+
+    # --project-directory makes this independent of the caller's CWD.
+    command = ["docker", "compose", "--project-directory", str(BASE),
+               "-f", str(compose), "up", "-d"]
+    try:
+        result = subprocess.run(command, cwd=BASE, capture_output=True, text=True)
+    except OSError as exc:
+        raise SyncError(f"Unable to start Docker: {exc}") from exc
+    if result.returncode:
+        details = (result.stderr.strip() or result.stdout.strip()).splitlines()
+        reason = details[-1] if details else "Unknown Docker Compose error"
+        raise SyncError(f"Docker startup failed: {reason}")
+
+    notice("Hermes Docker started.")
+    # Read the host-published port from the installer's non-secret dotenv metadata.
+    port = "8787"
+    dotenv = BASE / ".env"
+    if dotenv.is_file():
+        for line in dotenv.read_text(encoding="utf-8").splitlines():
+            match = re.fullmatch(r"\s*WEBUI_PORT\s*=\s*['\"]?(\d+)['\"]?\s*", line)
+            if match:
+                port = match.group(1)
+                break
+    info(f"WebUI: http://localhost:{port}")
+
+
+def do_stop():
+    """Stop only the installed Compose services; preserve containers and files."""
+    compose = BASE / "compose.yaml"
+    if not compose.is_file() or compose.is_symlink():
+        raise SyncError(f"Docker setup not found at {compose}. Run the portable installer first.")
+    if not shutil.which("docker"):
+        raise SyncError("Docker is not installed or is missing from PATH.")
+
+    # Mirror boot's ownership check: never operate on another installation.
+    existing = subprocess.run(
+        ["docker", "inspect", "-f", '{{index .Config.Labels "com.docker.compose.project.working_dir"}}', "hermes-webui"],
+        capture_output=True, text=True,
+    )
+    if existing.returncode == 0:
+        origin = existing.stdout.strip()
+        if origin and origin != "<no value>" and Path(origin).resolve() != BASE:
+            raise SyncError(f"hermes-webui belongs to a different Compose project: {origin}")
+
+    command = ["docker", "compose", "--project-directory", str(BASE),
+               "-f", str(compose), "stop"]
+    try:
+        result = subprocess.run(command, cwd=BASE, capture_output=True, text=True)
+    except OSError as exc:
+        raise SyncError(f"Unable to stop Docker: {exc}") from exc
+    if result.returncode:
+        details = (result.stderr.strip() or result.stdout.strip()).splitlines()
+        reason = details[-1] if details else "Unknown Docker Compose error"
+        raise SyncError(f"Docker shutdown failed: {reason}")
+
+    notice("Hermes Docker stopped.")
+    info("Workspaces, credentials and sync history preserved.")
+
+
 def main():
     parser = RichArgumentParser(prog="hermes", description="Private Git-based Hermes workspace synchronization")
     parser.add_argument("--version", nargs=0, action=RichVersionAction, help="Show version and exit")
     sub = parser.add_subparsers(dest="command", required=True, parser_class=RichArgumentParser)
+    sub.add_parser("boot", help="Start Hermes Agent and WebUI in Docker")
+    sub.add_parser("stop", help="Stop Hermes Docker services; preserve all data")
     share = sub.add_parser("share", help="Preview or initialize an isolated project copy")
     share.add_argument("path", nargs="?", default=".")
     share.add_argument("--name")
@@ -1130,6 +1208,12 @@ def main():
     args = parser.parse_args(argv)
     if args.command == "review" and args.reset_gui and not args.gui:
         parser.error("--reset-gui requires --gui")
+    if args.command == "boot":
+        do_boot()
+        return
+    if args.command == "stop":
+        do_stop()
+        return
     if args.command == "share":
         do_share(args)
         return

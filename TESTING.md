@@ -1,13 +1,11 @@
-# Verification notes
+# Verification notes (Hermes Sync v8)
 
-Package build validation (2026-10-19):
+- Shell syntax (`bash -n` for setup/management scripts): **PASS**.
+- Python syntax (`py_compile`): **PASS**.
+- `python3 tests/test_hermes_stop.py`: **6/6 passed**, with simulated Docker and disposable workspaces. Ensures stop only calls Compose stop, is repeatable, preserves files, rejects foreign containers, and reports errors without changing the version.
+- `python3 tests/test_hermes_boot.py`: **5/5 passed**, using a fake Docker executable and isolated disposable projects. Covers launching from an unrelated current directory, re-running `boot`, missing runtime, Docker failure, and another Compose project's existing container.
+- `python3 tests/test_hermes_v8.py -q`: **11/11 passed** (project CLI commands, isolation, purge safety).
+- `bash scripts/test-installer.sh` as a non-root user: **PASS** with disposable HOME, dummy local agent Git checkout, and simulated Docker. Confirms installer launches the app via `hermes boot`, backs up launchers, preserves existing data, protects Compose configuration, and does not touch the source `.git`.
+- One preexisting VS Code GUI test (`test_01_edit_proposal_pull_and_undo`) passed; an attempt to run the entire GUI suite was **inconclusive (execution timed out)**. The GUI/merge implementation is unchanged from v7; no claim of a full GUI suite pass is made for this build.
 
-- `bash -n` on all shell scripts: PASS.
-- `python3 -m py_compile cli/hermes_sync_v7.py`: PASS.
-- `python3 tests/test_hermes_v7.py -q`: **11/11 passed** (CLI namespace, purge and safety).
-- `python3 tests/test_hermes_sync_gui.py --sync cli/hermes_sync_v7.py`: **8/8 passed** (GUI review and undo using a stub `code` launcher).
-- `scripts/test-installer.sh`: **PASS** with a disposable HOME, dummy local agent Git repository and simulated Docker orchestration. Covered launcher protection/backups, fresh install, repeat install, Compose protection/backups, merging via installed CLI, and original `.git` isolation.
-
-The sync engine itself is unchanged from the previously-tested v7 script. These tests **do not** constitute a successful real-Docker installation on a fresh laptop. The environment used for package creation did not have a running Docker Engine; image pulls, live WebUI HTTP readiness and ChatGPT OAuth must still be validated on the target machine with `./doctor.sh`.
-
-The optional OS prerequisite installer was statically checked but **not executed**, because it needs root privileges and performs actual package-manager changes. The version of Hermes Agent cloned and the WebUI image tagged `latest` may change between installations.
+No real Docker daemon was run in this environment. The `boot` and `stop` commands was verified through a simulated Docker executable. Live Compose startup, WebUI health, and ChatGPT OAuth still require verification on the target machine. The upstream agent/image versions may change between installs because the installer defaults to upstream Git and `latest`.

@@ -41,7 +41,7 @@ grep -q 'ORIGINAL-HERMES' "$HOME/.local/bin/hermes" || { echo 'FAIL: launcher ch
 [[ -f "$HOME/Hermes/compose.yaml" && -f "$HOME/Hermes/.env" && -d "$HOME/Hermes/agent-src/.git" ]]
 [[ -d "$HOME/Hermes/data/.hermes" && -d "$HOME/Hermes/workspaces" && -d "$HOME/Hermes/sync/projects" ]]
 [[ ! -e "$HOME/.hermes" ]]
-"$HOME/.local/bin/hermes" --version | grep -q 'Hermes Sync v7'
+"$HOME/.local/bin/hermes" --version | grep -q 'Hermes Sync v8'
 [[ "$(readlink -f "$HOME/.local/bin/hermes-sync")" == "$(readlink -f "$HOME/.local/bin/hermes")" ]]
 [[ "$(find "$HOME/.local/share/hermes-sync/backups" -type f | wc -l)" -eq 1 ]]
 grep -q 'ORIGINAL-HERMES' "$HOME/.local/share/hermes-sync/backups/"*hermes
@@ -100,6 +100,10 @@ PATH="$TMP/fakebin:$PATH" "$HERE/setup.sh" > "$TMP/fake-docker-setup.log" 2>&1 |
 }
 grep -q 'compose config --quiet' "$FAKE_DOCKER_LOG"
 grep -q 'compose pull' "$FAKE_DOCKER_LOG"
-grep -q 'compose up -d' "$FAKE_DOCKER_LOG"
+grep -Eq 'compose .* up -d' "$FAKE_DOCKER_LOG"
+# Installed host CLI must also expose a safe, non-destructive stop command.
+PATH="$TMP/fakebin:$PATH" "$HOME/.local/bin/hermes" stop > "$TMP/fake-stop.log" 2>&1
+grep -Eq 'compose .* stop$' "$FAKE_DOCKER_LOG"
+[[ "$(cat "$HOME/Hermes/workspaces/preserved.txt")" == 'DO NOT DELETE ME' ]]
 
 echo 'PASS: installer isolation, launcher backup, idempotency, Compose backup, CLI merge, Git protection, Docker orchestration' 

@@ -148,7 +148,7 @@ if [[ ! -x "$VENV/bin/python" ]]; then
 fi
 "$VENV/bin/python" -m pip install --disable-pip-version-check -q -r "$HERE/requirements.txt"
 # Build a stable launcher with a correct absolute interpreter. Avoid sed/shebang issues.
-"$VENV/bin/python" - "$HERE/cli/hermes_sync_v7.py" "$CLI_TARGET" "$VENV/bin/python" <<'PY'
+"$VENV/bin/python" - "$HERE/cli/hermes_sync_v8.py" "$CLI_TARGET" "$VENV/bin/python" <<'PY'
 from pathlib import Path
 import sys
 source, target, interpreter = map(Path, sys.argv[1:4])
@@ -200,8 +200,8 @@ if docker inspect hermes-webui >/dev/null 2>&1; then
     die "Existing hermes-webui container belongs to $origin, not $ROOT. Stop and review it manually first."
   fi
 fi
-(cd "$ROOT" && docker compose pull && docker compose up -d)
-(cd "$ROOT" && docker compose ps)
+(cd "$ROOT" && docker compose pull)
+"$BIN_DIR/hermes" boot
 pass 'Docker services started (first boot can take several minutes to initialize Python dependencies)'
 printf '\nOpen WebUI: http://localhost:8787\n'
 printf 'Configure your model provider / ChatGPT OAuth in the WebUI (manual approval required).\n'

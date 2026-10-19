@@ -14,7 +14,7 @@ cd YOUR-REPO
 
 That one installer sets up the entire app and CLI **if Git, Docker Engine/Compose, and Python are already installed and Docker is accessible without sudo**. If they're missing on Ubuntu or Arch, first run `./scripts/install-docker.sh` interactively, log out and back in if it adds your user to the Docker group, then `./bootstrap.sh`. `bootstrap.sh` can invoke the optional OS installer when dependencies are missing; that helper asks for explicit confirmation before using sudo. A Docker group membership change requires logging out and back in, then rerunning bootstrap. On other distros install Docker manually.
 
-Open **http://localhost:8787**. Authenticate to ChatGPT/Codex in the WebUI (required manual OAuth device authorization; no API key or OAuth token is bundled). Then `./doctor.sh` checks the installation.
+Open **http://localhost:8787**. Authenticate to ChatGPT/Codex in the WebUI (required manual OAuth device authorization; no API key or OAuth token is bundled). Then `./doctor.sh` checks the installation. Start with **`hermes boot`** and stop with **`hermes stop`** (from any directory).
 
 **Never use `sudo ./setup.sh` or `sudo ./bootstrap.sh`**; it would target `/root/Hermes`, not your account.
 
@@ -36,6 +36,15 @@ Open **http://localhost:8787**. Authenticate to ChatGPT/Codex in the WebUI (requ
 ```
 
 Only scripts, configuration templates, and tests belong in the setup repository. **Do not commit** `~/Hermes/data`, `.env`, `sync`, `workspaces`, `agent-src`, `auth.json`, or copied projects; `~/Hermes/` must remain outside the setup repo. The repo's `.gitignore` excludes common runtime directories as a second line of defense.
+
+## Docker startup
+
+```bash
+hermes boot  # Starts Hermes Agent + WebUI; safe to run again when already running
+hermes stop  # Stops only the Docker services; leaves containers and files intact
+```
+
+This uses `~/Hermes/compose.yaml` (and its `.env`) regardless of your current directory. It runs `docker compose up -d` without pulling new images, re-installing the agent, or touching project workspaces. The initial `./bootstrap.sh` / `./setup.sh` also starts the container via the same command. `hermes stop` runs `docker compose stop` on this installation; it does not delete the container, its configuration, workspaces, credentials, or sync history. Finish any active agent task before stopping it. Open http://localhost:8787 (or your configured `WEBUI_PORT`). Docker Engine/Compose must be available to your user.
 
 ## Usage
 
@@ -87,6 +96,6 @@ If `hermes` isn't found immediately after install, open a new terminal or run `e
 
 ## Tests
 
-The repository includes regression scripts from sync v7. Run them only in temporary directories (the scripts provide their own temp roots) and never point them at `~/Hermes` or real projects. Basic static checks: `bash -n bootstrap.sh setup.sh doctor.sh update.sh manage.sh scripts/install-docker.sh`; Python syntax: `python3 -m py_compile cli/hermes_sync_v7.py`.
+The repository includes regression scripts from sync v8. Run them only in temporary directories (the scripts provide their own temp roots) and never point them at `~/Hermes` or real projects. Basic checks: `bash -n bootstrap.sh setup.sh doctor.sh update.sh manage.sh scripts/install-docker.sh`; `python3 -m py_compile cli/hermes_sync_v8.py`; `python3 tests/test_hermes_boot.py`; `python3 tests/test_hermes_stop.py`; `python3 tests/test_hermes_v8.py -q`.
 
 This is a setup wrapper around two upstream projects, not a fork or reimplementation of Hermes Agent/WebUI. Check their current licenses and release documentation if redistributing images or modifying upstream code.
