@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).resolve().parent.parent / 'cli' / 'hermes_sync_v8.py'
+SCRIPT = Path(__file__).resolve().parent.parent / 'cli' / 'hermes_sync_v9.py'
 
 
 class BootTests(unittest.TestCase):
@@ -17,8 +17,10 @@ class BootTests(unittest.TestCase):
         self.root = Path(temp.name)
         self.runtime = self.root / 'Hermes'
         self.runtime.mkdir()
-        (self.runtime / 'compose.yaml').write_text('name: hermes\nservices: {}\n')
-        (self.runtime / '.env').write_text('WEBUI_PORT=8822\n')
+        (self.runtime / 'compose.yaml').write_text((SCRIPT.parent.parent / 'docker' / 'compose.yaml').read_text())
+        (self.runtime / 'idle-workspace').mkdir()
+        (self.runtime / 'tools').mkdir()
+        (self.runtime / '.env').write_text(f"WEBUI_PORT=8822\nHERMES_ACTIVE_PROJECT=_inactive\nHERMES_ACTIVE_WORKSPACE='{self.runtime / 'idle-workspace'}'\nHERMES_TOOLS_HOME='{self.runtime / 'tools'}'\n")
         fakebin = self.root / 'bin'
         fakebin.mkdir()
         docker = fakebin / 'docker'

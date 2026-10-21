@@ -22,7 +22,7 @@ if [[ -e "$HOME/.hermes" ]]; then
 else
   ok 'No native ~/.hermes directory'
 fi
-for dir in "$ROOT/agent-src" "$ROOT/workspaces" "$ROOT/sync/projects" "$ROOT/data/.hermes"; do
+for dir in "$ROOT/agent-src" "$ROOT/workspaces" "$ROOT/sync/projects" "$ROOT/data/.hermes" "$ROOT/tools" "$ROOT/idle-workspace"; do
   if [[ -d "$dir" ]]; then ok "Directory: $dir"; else no "Missing: $dir"; fi
 done
 if [[ -f "$ROOT/.env" && -f "$ROOT/compose.yaml" ]]; then
@@ -36,6 +36,21 @@ else
   check docker compose -f "$ROOT/compose.yaml" ps
   if [[ -f "$ROOT/compose.yaml" ]] && (cd "$ROOT" && docker compose ps --status running --services 2>/dev/null | grep -qx webui); then
     ok 'WebUI container running'
+    # Check actual mounts, not just WebUI's selected working directory.
+    mount_report="$(docker inspect hermes-webui --format '{{json .Mounts}}' 2>/dev/null || true)"
+    if [[ -n "$mount_report" ]] && MOUNT_REPORT="$mount_report" ROOT="$ROOT" python3 - <<'PYMOUNT'
+import json, os
+from pathlib import Path
+mounts = json.loads(os.environ["MOUNT_REPORT"])
+root = Path(os.environ["ROOT"])
+project_mounts = [m for m in mounts if m.get("Destination", "").startswith("/workspace/")]
+assert len(project_mounts) == 1, f"expected one project mount, got {len(project_mounts)}"
+assert not any(m.get("Source") == str(root / "workspaces") for m in mounts)
+assert any(m.get("Source") == str(root / "tools") and m.get("Destination") == "/opt/hermes-tools" for m in mounts)
+PYMOUNT
+    then ok 'Only one workspace mounted; shared tools available'
+    else no 'Unexpected Docker mount layout (old multi-project container?)'
+    fi
   else
     no 'WebUI container not running'
   fi

@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).resolve().parent.parent / 'cli' / 'hermes_sync_v8.py'
+SCRIPT = Path(__file__).resolve().parent.parent / 'cli' / 'hermes_sync_v9.py'
 
 
 class StopTests(unittest.TestCase):
@@ -108,7 +108,7 @@ sys.exit(0)
         p = subprocess.run([sys.executable, str(SCRIPT), '--version'], cwd=self.cwd,
                            env=self.env, capture_output=True, text=True, timeout=10)
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertIn('Hermes Sync v8', p.stdout)
+        self.assertIn('Hermes Sync v9', p.stdout)
         self.assertIn('stop', subprocess.run([sys.executable, str(SCRIPT), '--help'],
                             cwd=self.cwd, env=self.env, capture_output=True,
                             text=True, timeout=10).stdout)

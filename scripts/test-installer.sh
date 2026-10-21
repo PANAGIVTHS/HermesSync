@@ -40,8 +40,12 @@ grep -q 'ORIGINAL-HERMES' "$HOME/.local/bin/hermes" || { echo 'FAIL: launcher ch
 }
 [[ -f "$HOME/Hermes/compose.yaml" && -f "$HOME/Hermes/.env" && -d "$HOME/Hermes/agent-src/.git" ]]
 [[ -d "$HOME/Hermes/data/.hermes" && -d "$HOME/Hermes/workspaces" && -d "$HOME/Hermes/sync/projects" ]]
+[[ -d "$HOME/Hermes/tools/bin" && -d "$HOME/Hermes/idle-workspace" ]]
+grep -q '^HERMES_ACTIVE_PROJECT=_inactive' "$HOME/Hermes/.env"
+grep -q 'source: ${HERMES_ACTIVE_WORKSPACE}' "$HOME/Hermes/compose.yaml"
+grep -q 'source: ${HERMES_TOOLS_HOME}' "$HOME/Hermes/compose.yaml"
 [[ ! -e "$HOME/.hermes" ]]
-"$HOME/.local/bin/hermes" --version | grep -q 'Hermes Sync v8'
+"$HOME/.local/bin/hermes" --version | grep -q 'Hermes Sync v9'
 [[ "$(readlink -f "$HOME/.local/bin/hermes-sync")" == "$(readlink -f "$HOME/.local/bin/hermes")" ]]
 [[ "$(find "$HOME/.local/share/hermes-sync/backups" -type f | wc -l)" -eq 1 ]]
 grep -q 'ORIGINAL-HERMES' "$HOME/.local/share/hermes-sync/backups/"*hermes
@@ -57,6 +61,26 @@ before="$(sha256sum "$HOME/Hermes/.env" | cut -d' ' -f1)"
 [[ "$(sha256sum "$HOME/Hermes/.env" | cut -d' ' -f1)" == "$before" ]]
 [[ "$(cat "$HOME/Hermes/workspaces/preserved.txt")" == 'DO NOT DELETE ME' ]]
 
+# Simulate a pre-Option-B v8 Compose installation and migrate it safely.
+sed -i '/^HERMES_ACTIVE_PROJECT=/d; /^HERMES_ACTIVE_WORKSPACE=/d; /^HERMES_TOOLS_HOME=/d' "$HOME/Hermes/.env"
+cat > "$HOME/Hermes/compose.yaml" <<'OLD_COMPOSE'
+name: hermes
+services:
+  webui:
+    image: ghcr.io/nesquena/hermes-webui:latest
+    volumes:
+      - type: bind
+        source: ${HERMES_WORKSPACES}
+        target: /workspace
+OLD_COMPOSE
+"$HERE/setup.sh" --no-start --replace-compose > "$TMP/migration.log" 2>&1 || {
+  cat "$TMP/migration.log" >&2; exit 1;
+}
+grep -q '^HERMES_ACTIVE_PROJECT=' "$HOME/Hermes/.env"
+grep -q 'source: ${HERMES_ACTIVE_WORKSPACE}' "$HOME/Hermes/compose.yaml"
+grep -q 'source: ${HERMES_TOOLS_HOME}' "$HOME/Hermes/compose.yaml"
+[[ "$(cat "$HOME/Hermes/workspaces/preserved.txt")" == 'DO NOT DELETE ME' ]]
+
 # Git isolation and end-to-end sync using the installed CLI.
 cd "$TMP/source"
 mkdir -p .git
@@ -68,6 +92,18 @@ printf 'agent edit\n' >> "$HOME/Hermes/workspaces/T/code.sv"
 "$HOME/.local/bin/hermes" sync > "$TMP/sync.log"
 [[ "$(cat code.sv)" == $'base\nagent edit' ]]
 [[ "$(cat .git/sentinel)" == 'ORIGINAL GIT MARKER' ]]
+# Selection can be configured with Docker stopped; project and tool files persist.
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/docker" <<'DOCKER_EARLY'
+#!/bin/sh
+if [ "$1" = inspect ]; then exit 1; fi
+exit 0
+DOCKER_EARLY
+chmod +x "$TMP/fakebin/docker"
+PATH="$TMP/fakebin:$PATH" "$HOME/.local/bin/hermes" use T > "$TMP/use.log"
+grep -q "HERMES_ACTIVE_PROJECT='T'" "$HOME/Hermes/.env"
+PATH="$TMP/fakebin:$PATH" "$HOME/.local/bin/hermes" use --none > "$TMP/unuse.log"
+grep -q "HERMES_ACTIVE_PROJECT='_inactive'" "$HOME/Hermes/.env"
 
 # Protect differing Compose, unless backed up explicitly.
 printf '# local custom compose\n' > "$HOME/Hermes/compose.yaml"

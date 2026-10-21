@@ -15,7 +15,8 @@ services:
       HERMES_WEBUI_HOST: "0.0.0.0"
       HERMES_WEBUI_PORT: "8787"
       HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui
-      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
+      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace/${HERMES_ACTIVE_PROJECT}
+      HERMES_TOOLS_DIR: /opt/hermes-tools
     volumes:
       - type: bind
         source: ${HERMES_DATA_DIR}
@@ -24,7 +25,12 @@ services:
         source: ${HERMES_AGENT_SRC}
         target: /home/hermeswebui/.hermes/hermes-agent
         read_only: true
+      # Only the selected project is visible to the agent. Never bind the whole workspaces root.
       - type: bind
-        source: ${HERMES_WORKSPACES}
-        target: /workspace
+        source: ${HERMES_ACTIVE_WORKSPACE}
+        target: /workspace/${HERMES_ACTIVE_PROJECT}
+      # Persist downloads / tools independently of synchronized projects.
+      - type: bind
+        source: ${HERMES_TOOLS_HOME}
+        target: /opt/hermes-tools
     restart: unless-stopped

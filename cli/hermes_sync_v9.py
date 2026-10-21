@@ -103,7 +103,7 @@ class RichArgumentParser(argparse.ArgumentParser):
 
 class RichVersionAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
-        _write(("Hermes Sync", "bold bright_green"), (" v8", ""))
+        _write(("Hermes Sync", "bold bright_green"), (" v9", ""))
         parser.exit(0)
 
 BASE = Path(os.environ.get("HERMES_INSTALL_DIR", str(Path.home() / "Hermes"))).expanduser().resolve()
@@ -608,6 +608,7 @@ def do_list(_args=None):
     table.add_column("Desktop")
     table.add_column("Hermes workspace", style="cyan")
     table.add_column("Status")
+    active = _current_active() if (BASE / ".env").is_file() else _IDLE_NAME
     for file in records:
         try:
             state = json.loads(file.read_text())
@@ -615,6 +616,8 @@ def do_list(_args=None):
             source = Path(state["source"])
             agent = Path(state["agent"])
             flags = []
+            if name == active:
+                flags.append("active")
             if not source.is_dir():
                 flags.append("desktop missing")
             if not agent.is_dir():
@@ -650,6 +653,8 @@ def do_purge(file: Path, state: dict, args):
         raise SyncError("Agent workspace is not a normal directory; refusing purge.")
     if not state_dir.is_dir():
         raise SyncError("Sync state is missing; refusing purge.")
+    if (BASE / ".env").is_file() and _current_active() == name:
+        raise SyncError(f"Project {name} is active. Run hermes use --none before purging.")
     heading(f"Purge · {name}")
     label("Agent files", str(agent_dir))
     label("Sync history", str(state_dir))
@@ -1082,15 +1087,84 @@ def do_recover(file: Path, state: dict):
     notice("Recovered pre-operation working copies.")
 
 
-def do_boot():
-    """Start the installed Docker Compose stack; independent of any sync project."""
+# Docker project isolation. No Git operation is involved in switching mounts.
+_IDLE_NAME = "_inactive"
+_PROJECT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,80}\Z")
+
+
+def _runtime_env() -> Path:
+    dotenv = BASE / ".env"
+    if not dotenv.is_file() or dotenv.is_symlink():
+        raise SyncError(f"Missing or unsafe Docker environment: {dotenv}. Run the portable installer.")
+    return dotenv
+
+
+def _read_runtime_values() -> dict[str, str]:
+    # Only handles the installer's well-defined, single-line path fields. Other
+    # Compose .env variables are left entirely unchanged.
+    values = {}
+    for line in _runtime_env().read_text(encoding="utf-8").splitlines():
+        match = re.fullmatch(r"(HERMES_[A-Z_]+)=(.*)", line.strip())
+        if match:
+            values[match.group(1)] = match.group(2).strip().strip("\"'")
+    return values
+
+
+def _write_active_environment(name: str, folder: Path) -> None:
+    dotenv = _runtime_env()
+    text = dotenv.read_text(encoding="utf-8")
+    updates = {"HERMES_ACTIVE_PROJECT": name, "HERMES_ACTIVE_WORKSPACE": str(folder)}
+    for key, value in updates.items():
+        if "\n" in value or "\r" in value or "'" in value or "\\" in value:
+            raise SyncError("Unsupported project workspace path characters.")
+        if re.search(rf"(?m)^{key}=", text):
+            text = re.sub(rf"(?m)^{key}=.*$", lambda _: f"{key}='{value}'", text)
+        else:
+            text += ("" if text.endswith("\n") else "\n") + f"{key}='{value}'\n"
+    # Atomic file replacement; do not overwrite credentials or other variables.
+    fd, tmp = tempfile.mkstemp(prefix=".env.", dir=BASE)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, dotenv)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _current_active() -> str:
+    return _read_runtime_values().get("HERMES_ACTIVE_PROJECT", _IDLE_NAME)
+
+
+def _validated_active(name: str) -> Path:
+    if name == _IDLE_NAME:
+        idle = BASE / "idle-workspace"
+        if not idle.is_dir() or idle.is_symlink():
+            raise SyncError("Inactive placeholder is missing or unsafe. Rerun setup.sh.")
+        return idle
+    if not _PROJECT_NAME_RE.fullmatch(name):
+        raise SyncError("Invalid project name.")
+    state_file = config_path(name)
+    if not state_file.is_file() or state_file.is_symlink():
+        raise SyncError(f"Unknown project: {name}. Use hermes list.")
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    folder = WORKSPACES / name
+    if (folder.is_symlink() or not folder.is_dir() or WORKSPACES.is_symlink()
+            or Path(state.get("agent", "")) != folder
+            or state.get("name") != name):
+        raise SyncError(f"Unsafe or missing agent workspace for {name}.")
+    return folder
+
+
+def _checked_compose() -> Path:
     compose = BASE / "compose.yaml"
     if not compose.is_file() or compose.is_symlink():
         raise SyncError(f"Docker setup not found at {compose}. Run the portable installer first.")
     if not shutil.which("docker"):
         raise SyncError("Docker is not installed or is missing from PATH.")
-
-    # Never accidentally take over another install's named container.
     existing = subprocess.run(
         ["docker", "inspect", "-f", '{{index .Config.Labels "com.docker.compose.project.working_dir"}}', "hermes-webui"],
         capture_output=True, text=True,
@@ -1099,7 +1173,94 @@ def do_boot():
         origin = existing.stdout.strip()
         if origin and origin != "<no value>" and Path(origin).resolve() != BASE:
             raise SyncError(f"hermes-webui belongs to a different Compose project: {origin}")
+    return compose
 
+
+def _require_isolated_compose() -> None:
+    # Refuse using the new selector with an old multi-project Compose mount.
+    compose = (BASE / "compose.yaml").read_text(encoding="utf-8")
+    required = ("source: ${HERMES_ACTIVE_WORKSPACE}",
+                "target: /workspace/${HERMES_ACTIVE_PROJECT}",
+                "source: ${HERMES_TOOLS_HOME}")
+    if any(item not in compose for item in required) or "source: ${HERMES_WORKSPACES}" in compose:
+        raise SyncError("Docker Compose still uses the old workspace layout. Update via setup.sh --replace-compose first.")
+
+
+def _compose_run(*args: str):
+    compose = _checked_compose()
+    command = ["docker", "compose", "--project-directory", str(BASE), "-f", str(compose), *args]
+    try:
+        result = subprocess.run(command, cwd=BASE, capture_output=True, text=True)
+    except OSError as exc:
+        raise SyncError(f"Docker command failed: {exc}") from exc
+    if result.returncode:
+        details = (result.stderr.strip() or result.stdout.strip()).splitlines()
+        reason = details[-1] if details else "Unknown Docker Compose error"
+        raise SyncError(f"Docker {' '.join(args)} failed: {reason}")
+    return result
+
+
+def _container_running() -> bool:
+    p = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", "hermes-webui"],
+                       capture_output=True, text=True)
+    return p.returncode == 0 and p.stdout.strip() == "true"
+
+
+def do_use(args):
+    """Switch the only project mount. Preserve config, history, and tools."""
+    target = _IDLE_NAME if args.none else args.project_name
+    if not args.none and target == _IDLE_NAME:
+        raise SyncError("Reserved workspace name. Use hermes use --none instead.")
+    folder = _validated_active(target)
+    _checked_compose()
+    _require_isolated_compose()
+    old = _current_active()
+    if old == target:
+        notice(f"Active workspace: {target if not args.none else '(none)'}.")
+        return
+    was_running = _container_running()
+    # Explicit checkpoint rule. Do not silently cancel an active task.
+    heading("Switch workspace")
+    label("From", old if old != _IDLE_NAME else "(none)")
+    label("To", target if target != _IDLE_NAME else "(none)")
+    if was_running and not args.yes:
+        if not sys.stdin.isatty():
+            raise SyncError("Switch requires confirmation while WebUI is running. Use --yes at a checkpoint.")
+        choice = _STDOUT.input(Text("Recreate Hermes Docker container now? [y/N] ", style="bold yellow")).strip().lower()
+        if choice not in ("y", "yes"):
+            notice("Cancelled.", "cyan")
+            return
+    old_folder = _validated_active(old) if old != target else folder
+    _write_active_environment(target, folder)
+    try:
+        _compose_run("config", "--quiet")
+        if was_running:
+            _compose_run("up", "-d", "--force-recreate", "--no-deps", "webui")
+    except (SyncError, OSError):
+        # Restore selection and best-effort container state on failed recreation.
+        _write_active_environment(old, old_folder)
+        if was_running:
+            try:
+                _compose_run("up", "-d", "--force-recreate", "--no-deps", "webui")
+            except (SyncError, OSError):
+                notice_error("Failed to restore previous container; inspect Docker manually.", "yellow")
+        raise
+    notice(f"Active workspace: {target if target != _IDLE_NAME else '(none)'}.")
+    info(f"WebUI workspace: /workspace/{target}")
+    if not was_running:
+        info("Docker is stopped. Run hermes boot when ready.")
+
+
+def do_boot():
+    """Start the installed Docker Compose stack; independent of any sync project."""
+    compose = _checked_compose()
+    _require_isolated_compose()
+    active = _current_active()
+    selected = _validated_active(active)
+    settings = _read_runtime_values()
+    if (settings.get("HERMES_ACTIVE_WORKSPACE") != str(selected)
+            or settings.get("HERMES_TOOLS_HOME") != str(BASE / "tools")):
+        raise SyncError("Unsafe Docker mount selection. Rerun setup.sh and use hermes use NAME.")
     # --project-directory makes this independent of the caller's CWD.
     command = ["docker", "compose", "--project-directory", str(BASE),
                "-f", str(compose), "up", "-d"]
@@ -1164,6 +1325,10 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True, parser_class=RichArgumentParser)
     sub.add_parser("boot", help="Start Hermes Agent and WebUI in Docker")
     sub.add_parser("stop", help="Stop Hermes Docker services; preserve all data")
+    use = sub.add_parser("use", help="Mount only one project in WebUI (or select none)")
+    use.add_argument("project_name", nargs="?", help="Registered project to expose inside Docker")
+    use.add_argument("--none", action="store_true", help="Unmount the active project (show empty workspace)")
+    use.add_argument("--yes", action="store_true", help="Recreate the running Docker container without prompting")
     share = sub.add_parser("share", help="Preview or initialize an isolated project copy")
     share.add_argument("path", nargs="?", default=".")
     share.add_argument("--name")
@@ -1208,6 +1373,11 @@ def main():
     args = parser.parse_args(argv)
     if args.command == "review" and args.reset_gui and not args.gui:
         parser.error("--reset-gui requires --gui")
+    if args.command == "use":
+        if args.none == bool(args.project_name):
+            parser.error("Specify a project name OR --none")
+        do_use(args)
+        return
     if args.command == "boot":
         do_boot()
         return

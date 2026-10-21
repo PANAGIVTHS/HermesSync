@@ -56,7 +56,7 @@ done
 if [[ "$HERE" == "$ROOT" || "$HERE" == "$ROOT/"* ]]; then
   die "This setup repository must live OUTSIDE $ROOT. Clone it elsewhere (e.g. ~/hermes-portable-setup)."
 fi
-for protected in "$ROOT" "$ROOT/data" "$ROOT/data/.hermes" "$ROOT/workspaces" "$ROOT/sync" "$ROOT/agent-src"; do
+for protected in "$ROOT" "$ROOT/data" "$ROOT/data/.hermes" "$ROOT/workspaces" "$ROOT/sync" "$ROOT/agent-src" "$ROOT/tools" "$ROOT/idle-workspace"; do
   [[ ! -L "$protected" ]] || die "Refusing symlinked runtime path: $protected (inspect manually)."
 done
 for program in git python3; do command -v "$program" >/dev/null 2>&1 || die "Missing $program. Run ./scripts/install-docker.sh for optional OS prerequisites."; done
@@ -94,7 +94,7 @@ if [[ -e "$BIN_DIR/hermes-sync" || -L "$BIN_DIR/hermes-sync" ]]; then
 fi
 
 say 'Preparing isolated runtime directories'
-mkdir -p "$ROOT/data/.hermes" "$ROOT/workspaces" "$ROOT/sync/projects" "$CLI_HOME/bin" "$BIN_DIR"
+mkdir -p "$ROOT/data/.hermes" "$ROOT/workspaces" "$ROOT/sync/projects" "$ROOT/tools/bin" "$ROOT/tools/downloads" "$ROOT/tools/python-envs" "$ROOT/idle-workspace" "$CLI_HOME/bin" "$BIN_DIR"
 chmod 700 "$ROOT/data/.hermes"
 if [[ ! -e "$ROOT/.env" ]]; then
   # Container variables only; secrets and OAuth credentials are written by the WebUI.
@@ -107,6 +107,9 @@ HERMES_GID=$(id -g)
 HERMES_DATA_DIR='$ROOT/data/.hermes'
 HERMES_AGENT_SRC='$ROOT/agent-src'
 HERMES_WORKSPACES='$ROOT/workspaces'
+HERMES_ACTIVE_PROJECT=_inactive
+HERMES_ACTIVE_WORKSPACE='$ROOT/idle-workspace'
+HERMES_TOOLS_HOME='$ROOT/tools'
 WEBUI_PORT=8787
 WEBUI_IMAGE=ghcr.io/nesquena/hermes-webui:latest
 ENV
@@ -115,6 +118,37 @@ ENV
 else
   say 'Keeping existing ~/Hermes/.env'
 fi
+# One-time migration of v8 installs: preserve unrelated .env settings and any
+# selected project. Never default to mounting the entire projects directory.
+python3 - "$ROOT/.env" "$ROOT" <<'PYENV'
+from pathlib import Path
+import os
+import sys
+path, root = Path(sys.argv[1]), Path(sys.argv[2])
+text = path.read_text(encoding="utf-8")
+def has(name):
+    return any(line.startswith(name + "=") for line in text.splitlines())
+extra = {
+    "HERMES_ACTIVE_PROJECT": "_inactive",
+    "HERMES_ACTIVE_WORKSPACE": str(root / "idle-workspace"),
+    "HERMES_TOOLS_HOME": str(root / "tools"),
+}
+for key, value in extra.items():
+    if not has(key):
+        text += ("" if text.endswith("\n") else "\n") + f"{key}='{value}'\n"
+if text != path.read_text(encoding="utf-8"):
+    temp = path.with_name(".env.setup-tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp, path)
+    finally:
+        if temp.exists():
+            temp.unlink()
+PYENV
 if [[ ! -e "$ROOT/compose.yaml" ]]; then
   cp -- "$HERE/docker/compose.yaml" "$ROOT/compose.yaml"
   pass 'Installed Docker Compose configuration'
@@ -148,7 +182,7 @@ if [[ ! -x "$VENV/bin/python" ]]; then
 fi
 "$VENV/bin/python" -m pip install --disable-pip-version-check -q -r "$HERE/requirements.txt"
 # Build a stable launcher with a correct absolute interpreter. Avoid sed/shebang issues.
-"$VENV/bin/python" - "$HERE/cli/hermes_sync_v8.py" "$CLI_TARGET" "$VENV/bin/python" <<'PY'
+"$VENV/bin/python" - "$HERE/cli/hermes_sync_v9.py" "$CLI_TARGET" "$VENV/bin/python" <<'PY'
 from pathlib import Path
 import sys
 source, target, interpreter = map(Path, sys.argv[1:4])
@@ -206,4 +240,4 @@ pass 'Docker services started (first boot can take several minutes to initialize
 printf '\nOpen WebUI: http://localhost:8787\n'
 printf 'Configure your model provider / ChatGPT OAuth in the WebUI (manual approval required).\n'
 printf 'Validate: ./doctor.sh\n'
-printf 'Project workflow: hermes share --name NAME --yes ; hermes review --gui ; hermes sync\n'
+printf 'Project workflow: hermes share --name NAME --yes ; hermes use NAME ; hermes review --gui ; hermes sync\n'

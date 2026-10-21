@@ -3,7 +3,7 @@
 All paths confined to disposable TemporaryDirectory. Never touches real Hermes installs.
 """
 import os, sys, tempfile, pathlib, subprocess, shutil, unittest, hashlib, json
-SCRIPT=pathlib.Path(__file__).resolve().parent.parent / 'cli' / 'hermes_sync_v8.py'
+SCRIPT=pathlib.Path(__file__).resolve().parent.parent / 'cli' / 'hermes_sync_v9.py'
 
 def run(args, cwd, env, ok=True, inp=None):
     p=subprocess.run(args,cwd=cwd,env=env,text=True,input=inp,capture_output=True,timeout=35)
