@@ -184,7 +184,7 @@ class SyncTests(unittest.TestCase):
                           'node_modules/a.js': 'lib', '.venv/bin/python': 'fake',
                           '__pycache__/m.pyc': 'fake', 'nested/.git/config': 'should skip',
                           'x/id_ed25519': 'key', 'x/.hg/config': 'skip',
-                          '.gitignore': '*.txt\n'})
+                          '.gitignore': '*.log\n'})
         f.share()
         self.assertTrue((f.agent / 'safe.txt').exists())
         self.assertTrue((f.agent / '.gitignore').exists())

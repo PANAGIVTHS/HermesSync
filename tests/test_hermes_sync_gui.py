@@ -126,15 +126,16 @@ class GUIReviewTests(unittest.TestCase):
         self.assertEqual(git_digest(),before)
         self.assertFalse((self.agent/'.git').exists())
 
-    def test_07_ignored_agent_additions_still_visible(self):
+    def test_07_untracked_gitignored_agent_files_not_in_gui(self):
         (self.source/'.gitignore').write_text('*.sv\n')
         self.run_cli('push')  # get .gitignore over to the agent
         (self.agent/'new.sv').write_text('module m; endmodule\n')
         self.run_cli('review','--gui')
         p=subprocess.run(['git','-C',str(self.gui),'status','--short'],capture_output=True,text=True,check=True)
-        self.assertIn('new.sv',p.stdout)
+        self.assertNotIn('new.sv',p.stdout)
         self.run_cli('pull')
-        self.assertTrue((self.source/'new.sv').exists())
+        self.assertFalse((self.source/'new.sv').exists())
+        self.assertTrue((self.agent/'new.sv').exists())
 
     def test_08_no_change_review_is_cleaned_after_pull(self):
         self.run_cli('review','--gui')

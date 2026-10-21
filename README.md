@@ -4,6 +4,28 @@
 
 Test target: Linux (Ubuntu/Arch), Git ≥2.38, Docker Engine + Compose v2, Python ≥3.10, Internet for initial downloads. Docker `ghcr.io/nesquena/hermes-webui:latest` image and fresh `NousResearch/hermes-agent` source are fetched at setup time.
 
+
+## Existing installation: safe `.gitignore` support upgrade
+
+This release makes Hermes Sync use standard Git `.gitignore` rules for **new/untracked** files. An agent-created `.gitignore` is considered when calculating the proposed merge, so project-local `.gradle/`, `build/`, etc. no longer appear as pending additions when ignored. **Files already present in an accepted private sync checkpoint remain managed**, even if a new ignore rule matches; this prevents unexpected deletion or untracking.
+
+**If the agent has just finished and its changes have not been synchronized yet, preserve them first.** From the downloaded repository (with Hermes at a checkpoint):
+
+```bash
+python3 scripts/upgrade-safely.py --project YOUR_PROJECT_NAME
+hermes status --project YOUR_PROJECT_NAME
+hermes review --gui --project YOUR_PROJECT_NAME  # optional, recommended
+# Only when the proposed changes are correct:
+hermes sync --project YOUR_PROJECT_NAME
+```
+
+The upgrader copies **all agent workspace files (including `.gradle/`)**, the project's entire **private sync state**, and the previous CLI into a separately located, integrity-checked backup under `~/Hermes-backups/`. It then atomically installs only `cli/hermes_sync.py` into the existing host launcher. It **does not** modify either workspace, Git repository, Docker, agent configuration, credentials, or active session; it does **not** run `sync`, `drop`, or `purge`. This operation may take time/disk space if the agent has large caches.
+
+If `hermes status` still shows caches, inspect whether they were already tracked in the private synchronization history or whether `.gitignore` doesn't match their paths. The upgrade intentionally **does not retroactively untrack accepted files**. Do not delete them to hide changes. A pre-existing GUI review can require `hermes review --gui --reset-gui` to regenerate; that option discards unsaved GUI review edits, not agent workspace files.
+
+For a fresh installation, continue using `./bootstrap.sh` / `./setup.sh`. The CLI remains `cli/hermes_sync.py` with a stable filename for clean Git history.
+
+
 ## Fresh machine (after publishing this folder to your own GitHub repository)
 
 ```bash

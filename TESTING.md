@@ -41,3 +41,14 @@ python3 tests/test_hermes_sync_gui.py --sync cli/hermes_sync.py
 python3 tests/test_hermes_sync.py --sync cli/hermes_sync.py --quick --jobs 4
 bash scripts/test-installer.sh
 ```
+
+## `.gitignore` regression and backup-first upgrade
+
+The dedicated `tests/test_gitignore.py` checks that a *new Hermes-created* `.gitignore` suppresses Gradle caches without dropping agent-written source files; tracked files stay managed; Git nested/negated patterns work; `.gitignore` conflicts remain conflicts; original `.git` bytes are unchanged; and push/undo preserve excluded files.
+
+```bash
+python3 -m unittest discover -s tests -p 'test_gitignore.py' -v
+python3 tests/test_hermes_sync_gui.py --sync cli/hermes_sync.py
+```
+
+`scripts/upgrade-safely.py` is designed for upgrading an already-registered project **without running Docker or touching workspaces**: back up its agent workspace + private Git sync state, verify the backup, then replace only the host CLI. Run the included tests to validate backup recovery assumptions before using real projects.

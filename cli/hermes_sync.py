@@ -216,14 +216,141 @@ def excluded(name: str, is_dir: bool) -> bool:
     return False
 
 
+# Git-standard ignore matching is evaluated in a PRIVATE scratch directory.
+# Never consult or modify the user's original .git or index. A shared proposed
+# .gitignore view is used on both sides so a newly-added agent .gitignore can
+# suppress untracked build output even if the desktop lacks that file.
+_ACTIVE_IGNORE = None
+
+
+def _ignore_files(root: Path) -> dict[str, bytes]:
+    """Read only .gitignore files, never anything from an original .git."""
+    found = {}
+    if not root.is_dir():
+        return found
+    for cur, dirs, files in os.walk(root, followlinks=False):
+        dirs[:] = [d for d in dirs if not excluded(d, True) and
+                   not (Path(cur) / d).is_symlink()]
+        if ".gitignore" in files and not (Path(cur) / ".gitignore").is_symlink():
+            file = Path(cur) / ".gitignore"
+            found[file.relative_to(root).as_posix()] = file.read_bytes()
+    return found
+
+
+def _merge_ignore_bytes(base: bytes | None, left: bytes | None, right: bytes | None) -> bytes | None:
+    """Three-way merge a single ignore file; defer ambiguous cases to the real merge."""
+    if left == right:
+        return left
+    if left == base:
+        return right
+    if right == base:
+        return left
+    if base is None or left is None or right is None:
+        return base
+    with tempfile.TemporaryDirectory(prefix="hermes-ignore-merge-") as temp:
+        f = [Path(temp) / x for x in ("ours", "ancestor", "theirs")]
+        for path, data in zip(f, (left, base, right)):
+            path.write_bytes(data)
+        p = subprocess.run(["git", "merge-file", "-p", *map(str, f)], capture_output=True)
+        return p.stdout if p.returncode == 0 else base
+
+
+class IgnorePolicy:
+    """Match ignore rules in a private scratch Git tree, independent of source Git."""
+    def __init__(self, source: Path, agent: Path | None = None, state: dict | None = None):
+        self.temp = tempfile.TemporaryDirectory(prefix="hermes-ignore-")
+        self.folder = Path(self.temp.name)
+        self.tracked: set[str] = set()
+        if state:
+            repo = Path(state["repo"])
+            for rev in {state["base"], state.get("desktop_head", state["base"]),
+                        state.get("agent_head", state["base"])}:
+                tree = out(repo, "rev-parse", f"{rev}^{{tree}}")
+                self.tracked.update(tree_files(repo, tree))
+        source_rules = _ignore_files(source)
+        if agent is None:
+            resolved = source_rules
+        else:
+            agent_rules = _ignore_files(agent)
+            base_rules = {}
+            if state:
+                repo = Path(state["repo"])
+                base_tree = out(repo, "rev-parse", f"{state['base']}^{{tree}}")
+                for rel, (_mode, oid) in tree_files(repo, base_tree).items():
+                    if Path(rel).name == ".gitignore":
+                        base_rules[rel] = git(repo, "cat-file", "blob", oid).stdout
+            resolved = {}
+            for rel in sorted(source_rules.keys() | agent_rules.keys() | base_rules.keys()):
+                content = _merge_ignore_bytes(base_rules.get(rel), source_rules.get(rel), agent_rules.get(rel))
+                if content is not None:
+                    resolved[rel] = content
+        for rel, data in resolved.items():
+            path = self.folder / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        init = subprocess.run(["git", "init", "-q", str(self.folder)], capture_output=True)
+        if init.returncode:
+            self.temp.cleanup()
+            raise SyncError("Cannot initialize temporary .gitignore matcher: " + init.stderr.decode(errors="replace"))
+
+    def close(self):
+        self.temp.cleanup()
+
+    def match(self, paths: list[str]) -> set[str]:
+        if not paths:
+            return set()
+        data = b"\0".join(os.fsencode(name) for name in paths) + b"\0"
+        env = dict(os.environ)
+        env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull})
+        p = subprocess.run(["git", "-C", str(self.folder), "-c", f"core.excludesfile={os.devnull}",
+                            "check-ignore", "--no-index", "--stdin", "-z"],
+                           input=data, capture_output=True, env=env)
+        if p.returncode not in (0, 1):
+            raise SyncError("Git .gitignore evaluation failed: " + p.stderr.decode(errors="replace"))
+        ignored = {os.fsdecode(x) for x in p.stdout.split(b"\0") if x}
+        # Git's rule: .gitignore only applies to untracked files. Keep anything
+        # from already-accepted snapshots under management to avoid deletions.
+        return {rel for rel in ignored if rel not in self.tracked and
+                Path(rel).name != ".gitignore"}
+
+
+@contextmanager
+def ignore_scope(source: Path, agent: Path | None = None, state: dict | None = None):
+    global _ACTIVE_IGNORE
+    previous = _ACTIVE_IGNORE
+    policy = IgnorePolicy(source, agent, state)
+    _ACTIVE_IGNORE = policy
+    try:
+        yield
+    finally:
+        _ACTIVE_IGNORE = previous
+        policy.close()
+
+
 def paths(root: Path, patterns: list[str] | None = None):
     patterns = patterns or []
     if not root.is_dir() or root.is_symlink():
         raise SyncError(f"Not a real directory: {root}")
+    candidates = []
     for cur, dirs, files in os.walk(root, topdown=True, followlinks=False):
         cur_p = Path(cur)
+        # Skip ignored directories early: Gradle/Node caches can contain many
+        # thousands of files (and symlinks). Previously snapshotted files are
+        # not pruned, even if a new rule now ignores their parent directory.
+        ignored_dirs = set()
+        if _ACTIVE_IGNORE:
+            eligible_dirs = [name for name in dirs if not excluded(name, True) and
+                             not pattern_excluded((cur_p / name).relative_to(root).as_posix(), True, patterns)]
+            ignored_dirs = _ACTIVE_IGNORE.match([
+                (cur_p / name).relative_to(root).as_posix() + "/" for name in eligible_dirs
+            ])
         for name in list(dirs):
-            if excluded(name, True) or pattern_excluded((cur_p / name).relative_to(root).as_posix(), True, patterns):
+            rel = (cur_p / name).relative_to(root).as_posix()
+            if excluded(name, True) or pattern_excluded(rel, True, patterns):
+                dirs.remove(name)
+            elif rel + "/" in ignored_dirs and not any(
+                tracked.startswith(rel + "/") for tracked in _ACTIVE_IGNORE.tracked
+            ):
                 dirs.remove(name)
             elif (cur_p / name).is_symlink():
                 raise SyncError(f"Symlink directory not supported: {cur_p / name}")
@@ -231,13 +358,18 @@ def paths(root: Path, patterns: list[str] | None = None):
             if excluded(name, False) or pattern_excluded((cur_p / name).relative_to(root).as_posix(), False, patterns):
                 continue
             p = cur_p / name
-            s = p.lstat()
-            if not stat.S_ISREG(s.st_mode):
-                raise SyncError(f"Non-regular file not supported: {p}")
             relative = p.relative_to(root).as_posix()
             if any(ord(c) < 32 or ord(c) == 127 for c in relative):
                 raise SyncError(f"Control characters in filename are unsupported: {relative!r}")
-            yield relative, p, ("100755" if s.st_mode & stat.S_IXUSR else "100644")
+            candidates.append((relative, p))
+    ignored = _ACTIVE_IGNORE.match([rel for rel, _ in candidates]) if _ACTIVE_IGNORE else set()
+    for relative, p in candidates:
+        if relative in ignored:
+            continue
+        s = p.lstat()
+        if not stat.S_ISREG(s.st_mode):
+            raise SyncError(f"Non-regular file not supported: {p}")
+        yield relative, p, ("100755" if s.st_mode & stat.S_IXUSR else "100644")
 
 
 def git(repo: Path, *args: str, input_bytes: bytes | None = None, check=True) -> subprocess.CompletedProcess:
@@ -551,7 +683,8 @@ def do_share(args):
     for pat in patterns:
         if not pat or pat.startswith("!") or "\x00" in pat:
             raise SyncError(f"Unsupported --exclude pattern: {pat!r}")
-    listing = list(paths(source, patterns))
+    with ignore_scope(source):
+        listing = list(paths(source, patterns))
     total_bytes = sum(p.stat().st_size for _, p, _ in listing)
     heading(f"Share · {name}")
     label("Source", str(source))
@@ -565,7 +698,7 @@ def do_share(args):
             _write(("    " + rel, ""))
         if len(listing) > len(shown):
             info(f"... {len(listing) - len(shown)} more files (--verbose shows all)")
-    notice("Original .git is excluded; .gitignore is not applied. Check for secrets.", "yellow")
+    notice("Original .git is excluded; Git-standard .gitignore rules are applied. Check for secrets.", "yellow")
     if not args.yes:
         notice("DRY RUN — nothing copied. Add --yes to share.", "cyan")
         return
@@ -577,7 +710,8 @@ def do_share(args):
         init = subprocess.run(["git", "init", "--bare", "--quiet", str(repo)], capture_output=True)
         if init.returncode:
             raise SyncError(init.stderr.decode(errors="replace"))
-        base, tree, _ = snapshot(repo, source, None, "Initial common snapshot", patterns)
+        with ignore_scope(source):
+            base, tree, _ = snapshot(repo, source, None, "Initial common snapshot", patterns)
         git(repo, "update-ref", "refs/hermes/base", base)
         # An empty initial destination is populated directly from the first snapshot.
         empty_tree = git(repo, "mktree", input_bytes=b"").stdout.decode().strip()
@@ -1393,7 +1527,7 @@ def main():
     if args.command == "pull":
         args.command = "sync"  # Legacy alias, same state and semantics.
     file, state = load_project(Path.cwd(), args.project)
-    with locked(file):
+    with locked(file), ignore_scope(Path(state["source"]), Path(state["agent"]), state):
         if state.get("pending_operation") and args.command != "recover":
             raise SyncError("Previous synchronization was interrupted. Run hermes recover (at a checkpoint).")
         if args.command == "recover":
