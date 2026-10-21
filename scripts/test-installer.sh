@@ -42,6 +42,8 @@ grep -q 'ORIGINAL-HERMES' "$HOME/.local/bin/hermes" || { echo 'FAIL: launcher ch
 [[ -d "$HOME/Hermes/data/.hermes" && -d "$HOME/Hermes/workspaces" && -d "$HOME/Hermes/sync/projects" ]]
 [[ -d "$HOME/Hermes/tools/bin" && -d "$HOME/Hermes/idle-workspace" ]]
 [[ -f "$HOME/Hermes/tools/env.sh" && -d "$HOME/Hermes/tools/env.d" && -d "$HOME/Hermes/tools/caches/gradle" ]]
+[[ -f "$HOME/Hermes/data/.hermes/SOUL.md" && -f "$HOME/Hermes/data/.hermes/WORKFLOW.md" ]]
+grep -q 'BEGIN HERMES PORTABLE WORKFLOW' "$HOME/Hermes/data/.hermes/config.yaml"
 grep -q 'BASH_ENV: /opt/hermes-tools/env.sh' "$HOME/Hermes/compose.yaml"
 HERMES_TOOLS_HOME="$HOME/Hermes/tools" BASH_ENV="$HOME/Hermes/tools/env.sh" bash -c '[[ "$PATH" == *"$HERMES_TOOLS_HOME/bin"* ]] && [[ "$GRADLE_USER_HOME" == "$HERMES_TOOLS_HOME/caches/gradle" ]]' 
 grep -q '^HERMES_ACTIVE_PROJECT=_inactive' "$HOME/Hermes/.env"
@@ -56,7 +58,7 @@ grep -q 'ORIGINAL-HERMES' "$HOME/.local/share/hermes-sync/backups/"*hermes
 # Simulate existing authenticated WebUI state: migration must preserve it.
 mkdir -p "$HOME/Hermes/data/.hermes"
 printf 'TEST-ONLY-TOKEN\n' > "$HOME/Hermes/data/.hermes/auth.json"
-printf 'model: test-provider\n' > "$HOME/Hermes/data/.hermes/config.yaml"
+printf 'model:\n  provider: test-provider\nagent:\n  system_prompt: "Custom instruction from before migration"\n' > "$HOME/Hermes/data/.hermes/config.yaml"
 auth_before="$(sha256sum "$HOME/Hermes/data/.hermes/auth.json" | cut -d' ' -f1)"
 config_before="$(sha256sum "$HOME/Hermes/data/.hermes/config.yaml" | cut -d' ' -f1)"
 
@@ -70,6 +72,11 @@ before="$(sha256sum "$HOME/Hermes/.env" | cut -d' ' -f1)"
 "$HERE/setup.sh" --no-start > "$TMP/second.log" 2>&1 || {
   cat "$TMP/second.log" >&2; exit 1;
 }
+# Installer migrates existing config once, preserving custom provider and prompt.
+grep -q 'test-provider' "$HOME/Hermes/data/.hermes/config.yaml"
+grep -q 'Custom instruction from before migration' "$HOME/Hermes/data/.hermes/config.yaml"
+grep -q 'BEGIN HERMES PORTABLE WORKFLOW' "$HOME/Hermes/data/.hermes/config.yaml"
+config_before="$(sha256sum "$HOME/Hermes/data/.hermes/config.yaml" | cut -d' ' -f1)"
 [[ "$(sha256sum "$HOME/Hermes/.env" | cut -d' ' -f1)" == "$before" ]]
 [[ "$(cat "$HOME/Hermes/workspaces/preserved.txt")" == 'DO NOT DELETE ME' ]]
 [[ "$(sha256sum "$HOME/Hermes/data/.hermes/auth.json" | cut -d' ' -f1)" == "$auth_before" ]]

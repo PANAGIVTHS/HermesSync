@@ -25,6 +25,25 @@ fi
 for dir in "$ROOT/agent-src" "$ROOT/workspaces" "$ROOT/sync/projects" "$ROOT/data/.hermes" "$ROOT/tools" "$ROOT/idle-workspace"; do
   if [[ -d "$dir" ]]; then ok "Directory: $dir"; else no "Missing: $dir"; fi
 done
+# Inspect managed workflow without printing private provider settings.
+if [[ -f "$ROOT/data/.hermes/SOUL.md" && -f "$ROOT/data/.hermes/WORKFLOW.md" ]]; then
+  ok 'Instance SOUL and workflow files present'
+else
+  no 'Missing instance SOUL or WORKFLOW.md'
+fi
+if [[ -x "$HOME/.local/share/hermes-sync/venv/bin/python" ]] && \
+   "$HOME/.local/share/hermes-sync/venv/bin/python" - "$ROOT/data/.hermes/config.yaml" <<'PYGUIDANCE' >/dev/null 2>&1
+import sys
+from pathlib import Path
+from ruamel.yaml import YAML
+config = YAML(typ='safe').load(Path(sys.argv[1]).read_text())
+prompt = config.get('agent', {}).get('system_prompt', '')
+assert prompt.count('<!-- BEGIN HERMES PORTABLE WORKFLOW -->') == 1
+assert prompt.count('<!-- END HERMES PORTABLE WORKFLOW -->') == 1
+PYGUIDANCE
+then ok 'Instance workflow injected into agent.system_prompt'
+else no 'Instance workflow injection missing or invalid'
+fi
 if [[ -f "$ROOT/tools/env.sh" ]]; then
   if HERMES_TOOLS_HOME="$ROOT/tools" BASH_ENV="$ROOT/tools/env.sh" bash -c        '[[ ":$PATH:" == *":$HERMES_TOOLS_HOME/bin:"* && "$GRADLE_USER_HOME" == "$HERMES_TOOLS_HOME/caches/gradle" ]]' >/dev/null 2>&1; then
     ok 'Persistent tools environment loads in Bash'

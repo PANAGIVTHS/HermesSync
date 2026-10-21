@@ -14,6 +14,8 @@ REPLACE_COMPOSE=0
 NO_START=0
 UPDATE_AGENT=0
 REPLACE_LAUNCHER=0
+REPLACE_SOUL=0
+REPLACE_WORKFLOW=0
 
 say()  { printf '\033[36m→\033[0m %s\n' "$*"; }
 pass() { printf '\033[32m✓\033[0m %s\n' "$*"; }
@@ -32,6 +34,8 @@ Options:
   --replace-compose    Back up and replace an existing ~/Hermes/compose.yaml
   --update-agent       Fast-forward an existing agent-src checkout to upstream
   --no-start           Install files without running Docker Compose
+  --replace-soul       Back up and replace existing SOUL.md with template
+  --replace-workflow   Back up and replace existing WORKFLOW.md with template
   -h, --help           Show this help
 
 Existing workspaces, sync history, credentials, and source repositories are preserved.
@@ -43,6 +47,8 @@ for arg in "$@"; do
     --replace-compose) REPLACE_COMPOSE=1;;
     --replace-launcher) REPLACE_LAUNCHER=1;;
     --no-start) NO_START=1;;
+    --replace-soul) REPLACE_SOUL=1;;
+    --replace-workflow) REPLACE_WORKFLOW=1;;
     --update-agent) UPDATE_AGENT=1;;
     -h|--help) usage; exit 0;;
     *) die "Unknown option: $arg";;
@@ -196,6 +202,13 @@ if [[ ! -x "$VENV/bin/python" ]]; then
   python3 -m venv "$VENV" || die 'Could not create Python venv (on Ubuntu: install python3-venv).'
 fi
 "$VENV/bin/python" -m pip install --disable-pip-version-check -q -r "$HERE/requirements.txt"
+# The agent's global operating contract is instance state, NOT a project file.
+# Preserve any existing SOUL and custom agent.system_prompt text.
+say 'Installing Hermes personality and workspace guidance'
+guidance_args=()
+(( REPLACE_SOUL )) && guidance_args+=(--replace-soul)
+(( REPLACE_WORKFLOW )) && guidance_args+=(--replace-workflow)
+"$VENV/bin/python" "$HERE/scripts/apply-agent-guidance.py" --home "$ROOT/data/.hermes" --repo "$HERE" "${guidance_args[@]}"
 # Build a stable launcher with a correct absolute interpreter. Avoid sed/shebang issues.
 "$VENV/bin/python" - "$HERE/cli/hermes_sync.py" "$CLI_TARGET" "$VENV/bin/python" <<'PY'
 from pathlib import Path
@@ -253,6 +266,6 @@ fi
 "$BIN_DIR/hermes" boot
 pass 'Docker services started (first boot can take several minutes to initialize Python dependencies)'
 printf '\nOpen WebUI: http://localhost:8787\n'
-printf 'Configure your model provider / ChatGPT OAuth in the WebUI (manual approval required).\n'
+printf 'If this is a first installation, configure ChatGPT OAuth in WebUI. Existing credentials are preserved.\n'
 printf 'Validate: ./doctor.sh\n'
 printf 'Project workflow: hermes share --name NAME --yes ; hermes use NAME ; hermes review --gui ; hermes sync\n'

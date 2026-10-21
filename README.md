@@ -45,6 +45,33 @@ Open **http://localhost:8787**. Authenticate to ChatGPT/Codex in the WebUI (requ
 
 Only scripts, configuration templates, and tests belong in the setup repository. **Do not commit** `~/Hermes/data`, `.env`, `sync`, `workspaces`, `agent-src`, `auth.json`, or copied projects; `~/Hermes/` must remain outside the setup repo. The repo's `.gitignore` excludes common runtime directories as a second line of defense.
 
+## Agent guidance: SOUL.md and workflow rules
+
+The installer configures **two separate global instruction layers**, outside the synchronized project directories:
+
+```text
+~/Hermes/data/.hermes/SOUL.md       # Agent identity, tone, and collaboration style
+~/Hermes/data/.hermes/WORKFLOW.md   # Persistent operating contract, editable by you
+~/Hermes/data/.hermes/config.yaml   # Receives one marked agent.system_prompt block
+```
+
+`SOUL.md` is about *how* the agent communicates. The workflow document teaches the Dockerized agent *where it may work* and *how to cooperate with your desktop workflow*: the active workspace, host-only `hermes` commands, shared persistent tools, no Git initialization or commits in copied projects, minimal code changes, automated tests, and review/synchronization left to the user. Project-specific architecture and testing rules belong in the project's existing `AGENTS.md` (or `.hermes.md`) file, not in the global SOUL. No agent-instructions file is silently inserted into a synchronized project.
+
+The installer preserves existing SOUL, WORKFLOW, credentials, and unrelated YAML settings. It only inserts or updates a **clearly marked section** of `agent.system_prompt` using a round-trip YAML parser. Before changing `config.yaml`, it saves a private `.backup.*` file. The installer does not change `approvals.mode`, model, or OAuth configuration.
+
+To intentionally adopt updated repository guidance on an existing installation, use:
+
+```bash
+./setup.sh --replace-workflow --no-start   # Backup/update workflow, then refresh config.yaml
+./setup.sh --replace-soul --no-start       # OPTIONAL: backup/replace your personalized SOUL
+```
+
+After changing global instructions, start a **new WebUI chat/session** so Hermes loads the new context. If you use a `/personality` preset, it can affect how the custom system prompt is used; choose the default personality when validating. To test, ask Hermes which workspace it may modify, where to install a reusable JDK, whether it may run desktop `hermes sync`, and who handles commits. It should answer that it edits the active `/workspace/<project>`, installs reusable tools under `/opt/hermes-tools`, never operates host sync commands, and leaves integration/commits to you. Do not share `config.yaml` or `auth.json` contents when troubleshooting.
+
+If you customize `WORKFLOW.md` directly, rerun `./setup.sh --no-start` to apply its latest contents to the managed config block. Existing guidance is not silently replaced during installer updates; use `--replace-workflow` explicitly to adopt revised upstream templates. For project-specific exceptions (e.g. build a Minecraft mod, but don't launch its game client), keep `AGENTS.md` in the project or explicitly tell Hermes in your task prompt.
+
+**Security note:** These are agent instructions, not a sandbox. Actual per-project filesystem separation still comes from Docker's active-project mount. The agent can access its persistent shared tools and its own runtime state.
+
 ## Docker startup
 
 ```bash
