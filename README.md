@@ -5,26 +5,13 @@
 Test target: Linux (Ubuntu/Arch), Git ≥2.38, Docker Engine + Compose v2, Python ≥3.10, Internet for initial downloads. Docker `ghcr.io/nesquena/hermes-webui:latest` image and fresh `NousResearch/hermes-agent` source are fetched at setup time.
 
 
-## Existing installation: safe `.gitignore` support upgrade
+## Synchronization and `.gitignore`
 
-This release makes Hermes Sync use standard Git `.gitignore` rules for **new/untracked** files. An agent-created `.gitignore` is considered when calculating the proposed merge, so project-local `.gradle/`, `build/`, etc. no longer appear as pending additions when ignored. **Files already present in an accepted private sync checkpoint remain managed**, even if a new ignore rule matches; this prevents unexpected deletion or untracking.
+The host-side `hermes` CLI synchronizes registered projects using a **separate private Git database**, never your original repository's `.git`. It uses standard Git `.gitignore` rules for **new/untracked** files, including nested ignore files, negations, and newly created agent-side `.gitignore` files. For example, `.gradle/`, `build/`, and other ignored caches remain in the agent workspace without being copied to the desktop.
 
-**If the agent has just finished and its changes have not been synchronized yet, preserve them first.** From the downloaded repository (with Hermes at a checkpoint):
+The `.gitignore` file itself is a project source file and may be synchronized. **Files already included in a previously accepted synchronization checkpoint remain managed**, even if a new `.gitignore` rule matches them; they are not silently deleted or untracked. Explicit Hermes-only `--exclude` rules remain available when sharing a new project.
 
-```bash
-python3 scripts/upgrade-safely.py --project YOUR_PROJECT_NAME
-hermes status --project YOUR_PROJECT_NAME
-hermes review --gui --project YOUR_PROJECT_NAME  # optional, recommended
-# Only when the proposed changes are correct:
-hermes sync --project YOUR_PROJECT_NAME
-```
-
-The upgrader copies **all agent workspace files (including `.gradle/`)**, the project's entire **private sync state**, and the previous CLI into a separately located, integrity-checked backup under `~/Hermes-backups/`. It then atomically installs only `cli/hermes_sync.py` into the existing host launcher. It **does not** modify either workspace, Git repository, Docker, agent configuration, credentials, or active session; it does **not** run `sync`, `drop`, or `purge`. This operation may take time/disk space if the agent has large caches.
-
-If `hermes status` still shows caches, inspect whether they were already tracked in the private synchronization history or whether `.gitignore` doesn't match their paths. The upgrade intentionally **does not retroactively untrack accepted files**. Do not delete them to hide changes. A pre-existing GUI review can require `hermes review --gui --reset-gui` to regenerate; that option discards unsaved GUI review edits, not agent workspace files.
-
-For a fresh installation, continue using `./bootstrap.sh` / `./setup.sh`. The CLI remains `cli/hermes_sync.py` with a stable filename for clean Git history.
-
+When Hermes has finished work you haven't synchronized, **do not run `hermes drop`, `hermes purge`, or any cleanup operation** during an update. The normal installer updates the host CLI, templates, and optional container configuration; it does **not** sync or delete project workspaces. See [Updating an existing installation](#updating-an-existing-installation) for backup guidance.
 
 ## Fresh machine (after publishing this folder to your own GitHub repository)
 
@@ -156,7 +143,39 @@ docker compose -f ~/Hermes/compose.yaml exec webui bash -c 'printf "PATH include
 
 Project isolation is about ordinary host bind mounts, not an absolute sandbox: agent state, previous chat attachments, and global tools can persist between projects. Do not store other project copies under the shared tools directory. Your original Git repo stays outside Docker. Never mount your Docker socket or entire `~/Hermes/workspaces` into WebUI.
 
-**Existing installations (v8/v9):** stop active tasks, extract this repository **outside `~/Hermes/`**, then run `./setup.sh --replace-compose --replace-launcher` to back up/reinstall the CLI and switch Compose to single-project mounting. The installer preserves workspaces, sync databases, credentials, and WebUI sessions; initially no project is active. After it starts Docker, run `hermes use PROJECT`. You do not need to re-share existing projects. Before updating manually customized Compose files, review the backed-up configuration. Use `./setup.sh --replace-compose --replace-launcher --no-start` only if you intend to start/recreate Docker separately: **until the running old container is recreated, it may still have access to all workspaces**.
+## Updating an existing installation
+
+**Finish or checkpoint any running agent task first.** If Hermes has unmerged work you particularly care about, make an optional backup of its project copy **and** private synchronization state before updating. For example, using the registered project name `MyGPU`:
+
+```bash
+mkdir -p "$HOME/Hermes-backups/MyGPU"
+cp -a "$HOME/Hermes/workspaces/MyGPU" "$HOME/Hermes-backups/MyGPU/workspace"
+cp -a "$HOME/Hermes/sync/projects/MyGPU" "$HOME/Hermes-backups/MyGPU/sync-state"
+```
+
+Use a fresh backup destination if you repeat this process; `cp -a` is not an integrity-verification tool. These commands copy the working files and private history **without touching the original repository**. The backup may be large if generated caches exist. Never commit it to this source repository.
+
+Install or update from the **separate cloned setup repository**, not `~/Hermes/`:
+
+```bash
+./setup.sh --replace-compose --replace-launcher
+```
+
+`--replace-compose` backs up and replaces the Compose template when it differs; `--replace-launcher` backs up any unmanaged host launcher. Existing workspaces, sync state, OAuth credentials, global instructions, and tools are preserved. The installer does not invoke `hermes sync`, `hermes drop`, or `hermes purge`.
+
+For an installation transitioning from an older multi-project container, select the active project after setup with `hermes use PROJECT`; the old all-projects Docker mount is removed when Compose recreates the container. If you use `--no-start`, ensure you recreate the container yourself before trusting the new isolation layout. No re-sharing of registered projects is required.
+
+Afterward, inspect pending changes *before* integrating any agent work:
+
+```bash
+hermes list
+hermes status --project MyGPU
+hermes review --gui --project MyGPU  # optional
+# Only when you are satisfied:
+hermes sync --project MyGPU
+```
+
+If generated caches are still listed, check whether they were already included in an accepted checkpoint, or whether the project's `.gitignore` actually matches them. Don't delete files just to make status look clean.
 
 ## Management and updating
 

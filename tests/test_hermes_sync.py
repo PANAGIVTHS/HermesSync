@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Black-box regression tests for Hermes Sync v3 (or another compatible CLI).
+"""Black-box regression tests for the Hermes Sync CLI.
 
 Runs only in brand-new temporary directories. Does not touch your real projects,
 ~/Hermes, or any existing private Git sync database.

@@ -1,54 +1,51 @@
-# Verification notes
+# Testing
 
-All tests below use disposable project directories. These checks were performed
-for the stable-filename portable setup and persistent shared-tools environment.
+All tests operate on disposable directories and must **never** be pointed at
+real project folders or the live `~/Hermes` runtime. They check the host
+synchronization CLI and install scripts; most Docker behavior is simulated.
 
-| Test | Result |
-|---|---:|
-| Core synchronization regression (quick, two batches) | 71/71 passed |
-| VS Code GUI proposal regression (simulated launcher) | 8/8 passed |
-| CLI/project and purge regression | 11/11 passed |
-| Docker boot simulations | 5/5 passed |
-| Docker stop simulations | 6/6 passed |
-| Active-project isolation / switching simulations | 8/8 passed |
-| Persistent tools environment (Bash -c / -lc, Gradle, JDK, env.d) | 7/7 passed |
-| Hermes global guidance: install, preserve, update, refuse malformed configs | 5/5 passed |
-| Isolated portable installer with dummy agent Git checkout | Passed |
-| Shell syntax / Python compilation | Passed |
+## Requirements
 
-The previous 116-case baseline was validated for the earlier stable-filename setup. For this revision, re-run the suites below in addition to the new guidance tests before treating the result as a complete regression pass.
+Python 3.10+, Git 2.38+, and the dependencies in `requirements.txt`.
+On the installed system, you can use the host CLI's Python environment:
+`~/.local/share/hermes-sync/venv/bin/python`.
 
-These tests do not launch a live Docker daemon or download the actual Hermes WebUI
-image. On a real machine, verify `hermes boot`, then run `./doctor.sh`, inspect
-Docker mounts and ask Hermes to run `command -v my-tool` after installing a test
-executable under `/opt/hermes-tools/bin`. Authentication cannot be tested without
-the user's approval.
+## Run the checks
 
-The tool environment itself is tested by actually launching Bash in noninteractive
-and login modes with `BASH_ENV` set. This validates shell semantics but not every
-upstream version's terminal startup behavior.
-
-CLI tests:
+From the cloned setup repository:
 
 ```bash
+bash -n bootstrap.sh setup.sh update.sh manage.sh doctor.sh scripts/*.sh
+python3 -m py_compile cli/hermes_sync.py scripts/apply-agent-guidance.py
+python3 -m unittest discover -s tests -p 'test_gitignore.py' -v
 python3 -m unittest discover -s tests -p 'test_agent_guidance.py' -v
-```
-
-
-```bash
 python3 -m unittest discover -s tests -p 'test_tools_environment.py' -v
-python3 tests/test_hermes_sync_gui.py --sync cli/hermes_sync.py
 python3 tests/test_hermes_sync.py --sync cli/hermes_sync.py --quick --jobs 4
+python3 tests/test_hermes_sync_gui.py --sync cli/hermes_sync.py
+python3 tests/test_hermes_cli.py -q
+python3 tests/test_hermes_use.py -q
+python3 tests/test_hermes_boot.py -q
+python3 tests/test_hermes_stop.py -q
 bash scripts/test-installer.sh
 ```
 
-## `.gitignore` regression and backup-first upgrade
+The Git ignore tests cover newly created agent-side `.gitignore` files,
+Gradle caches, nested rules, negations, tracked-file preservation, and
+original `.git` protection. The GUI tests simulate launching VS Code;
+they do not test interactive editor clicks.
 
-The dedicated `tests/test_gitignore.py` checks that a *new Hermes-created* `.gitignore` suppresses Gradle caches without dropping agent-written source files; tracked files stay managed; Git nested/negated patterns work; `.gitignore` conflicts remain conflicts; original `.git` bytes are unchanged; and push/undo preserve excluded files.
+## Real machine checks
+
+A genuine fresh-machine deployment is **not** covered by the simulated
+Docker tests. After installation, run:
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_gitignore.py' -v
-python3 tests/test_hermes_sync_gui.py --sync cli/hermes_sync.py
+./doctor.sh
+hermes list
+hermes boot
 ```
 
-`scripts/upgrade-safely.py` is designed for upgrading an already-registered project **without running Docker or touching workspaces**: back up its agent workspace + private Git sync state, verify the backup, then replace only the host CLI. Run the included tests to validate backup recovery assumptions before using real projects.
+Verify with `docker inspect hermes-webui` that only the selected project
+is mounted under `/workspace`, and that `/opt/hermes-tools` is mounted.
+Complete model OAuth separately. Do not paste `auth.json`, `.env`, or
+`config.yaml` (which may contain private credentials) into bug reports.

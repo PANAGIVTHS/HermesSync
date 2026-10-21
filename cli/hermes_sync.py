@@ -19,7 +19,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 
 from rich.console import Console
@@ -1527,7 +1527,12 @@ def main():
     if args.command == "pull":
         args.command = "sync"  # Legacy alias, same state and semantics.
     file, state = load_project(Path.cwd(), args.project)
-    with locked(file), ignore_scope(Path(state["source"]), Path(state["agent"]), state):
+    # Purge only unregisters/removes the agent project; ignore rules and Git
+    # snapshots are irrelevant. In particular, allow safe removal of damaged
+    # registrations without requiring a valid common-base commit.
+    ignore_context = (nullcontext() if args.command == "purge"
+                      else ignore_scope(Path(state["source"]), Path(state["agent"]), state))
+    with locked(file), ignore_context:
         if state.get("pending_operation") and args.command != "recover":
             raise SyncError("Previous synchronization was interrupted. Run hermes recover (at a checkpoint).")
         if args.command == "recover":
