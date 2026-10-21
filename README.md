@@ -28,7 +28,11 @@ Open **http://localhost:8787**. Authenticate to ChatGPT/Codex in the WebUI (requ
   data/.hermes/                   # WebUI credentials, config, sessions (PRIVATE)
   workspaces/                     # independent project copies; only active one mounted
   idle-workspace/                 # empty placeholder when no project selected
-  tools/bin/                      # persistent executables, global to all projects
+  tools/env.sh                    # persistent Bash environment (preserved on reinstall)
+  tools/env.d/                    # optional extra per-tool shell environment snippets
+  tools/bin/                      # persistent executables, automatically in PATH
+  tools/jdks/current -> jdk-25/    # optional active JDK version
+  tools/caches/gradle/            # Gradle wrapper distributions and dependency caches
   tools/downloads/                # reusable archives and downloads
   tools/python-envs/              # persistent per-tool virtual environments
   sync/projects/                  # private Git history and GUI review state
@@ -83,11 +87,27 @@ hermes use --none          # No project visible inside the container
 
 New installs start with `/workspace/_inactive` (an empty placeholder) until `hermes use PROJECT` is run. For a stopped container, `hermes use` changes the next-start selection without starting Docker; run `hermes boot` afterward. WebUI's workspace dropdown should point to `/workspace/PROJECT` after switching; **older saved chat sessions may retain the previous workspace path** and should not be reused for the new project. Do not choose `/workspace` to work across repositories: only the mounted active project is available.
 
-A **separate persistent global tools area** is mounted at `/opt/hermes-tools` from `~/Hermes/tools/`. The agent can reuse downloaded binaries, source archives, Python virtual environments, and scripts for every project, e.g. install scripts into `/opt/hermes-tools/bin/`, then run `/opt/hermes-tools/bin/my-tool`. For shell sessions needing short tool names, use `export PATH="/opt/hermes-tools/bin:$PATH"`. This folder is intentionally **outside** the project sync/list registry, so `hermes sync`, `push`, `drop` and `list` never treat it as a synchronized project. Tool installs via `apt` change the container's writable layer and may not survive Docker recreation; put reusable binaries and environment data in `/opt/hermes-tools` or build a custom image for system packages. Python environments may require rebuilding if the underlying image/Python changes.
+A **separate persistent global tools area** is mounted at `/opt/hermes-tools` from `~/Hermes/tools/`. The installer **once** sets `BASH_ENV=/opt/hermes-tools/env.sh` in Docker Compose, so Hermes terminal commands running under Bash load that environment automatically, even in noninteractive shells. No further Compose edits are needed for new tools.
+
+- Put standalone binaries or launcher scripts in `/opt/hermes-tools/bin/`; this directory is automatically added to `PATH`.
+- The Gradle wrapper manages Gradle itself. Its distributions/dependency cache is persistent at `/opt/hermes-tools/caches/gradle/` via `GRADLE_USER_HOME`.
+- Install a JDK under `/opt/hermes-tools/jdks/jdk-25/` (or another version) and make `/opt/hermes-tools/jdks/current` point to it. The environment detects the active JDK and exports `JAVA_HOME` and its `bin` directory on `PATH`. Hermes can change the symlink when a different JDK version is needed.
+- For any other tool that requires environment variables, add a **silent, noninteractive, idempotent** file to `/opt/hermes-tools/env.d/tool-name.sh`. The common `env.sh` sources every `*.sh` file from there on every new Bash shell.
+- `/opt/hermes-tools/env.sh` is copied from this repository's `tools/env.sh` **only if it does not already exist**. Reinstalling/updating never silently replaces user customizations.
+
+The shared tools folder is outside all registered workspaces and therefore **never appears in `hermes list` or project synchronization**. It persists across project switches, Docker recreation and reboots. Files under it are still genuine host files (this is a bind mount), and tools installed with `apt` inside the container do *not* automatically persist when the container is recreated. Use this shared area for user-space tools; rebuild the image if unavoidable system libraries are required. Python environments may require rebuilding after Python/image upgrades.
+
+**Scope:** `BASH_ENV` is used by Hermes's Bash-based terminal commands, not arbitrary processes that bypass Bash. Newly installed tools are picked up by new Bash processes; a long-lived agent session with a cached environment might need a new session/restart. Shell init snippets execute code, not just set variables: treat anything written into `tools/env.d` as trusted.
+
+You can verify the tools environment in the running container with:
+
+```bash
+docker compose -f ~/Hermes/compose.yaml exec webui bash -c 'printf "PATH includes: %s\nGradle cache: %s\n" "$HERMES_TOOLS_HOME/bin" "$GRADLE_USER_HOME"'
+```
 
 Project isolation is about ordinary host bind mounts, not an absolute sandbox: agent state, previous chat attachments, and global tools can persist between projects. Do not store other project copies under the shared tools directory. Your original Git repo stays outside Docker. Never mount your Docker socket or entire `~/Hermes/workspaces` into WebUI.
 
-**Existing v8 installations:** stop active tasks, extract this repository **outside `~/Hermes/`**, then run `./setup.sh --replace-compose --replace-launcher` to back up/reinstall the CLI and switch Compose to single-project mounting. The installer preserves workspaces, sync databases, credentials, and WebUI sessions; initially no project is active. After it starts Docker, run `hermes use PROJECT`. You do not need to re-share existing projects. Before updating manually customized Compose files, review the backed-up configuration. Use `./setup.sh --replace-compose --replace-launcher --no-start` only if you intend to start/recreate Docker separately: **until the running old container is recreated, it may still have access to all workspaces**.
+**Existing installations (v8/v9):** stop active tasks, extract this repository **outside `~/Hermes/`**, then run `./setup.sh --replace-compose --replace-launcher` to back up/reinstall the CLI and switch Compose to single-project mounting. The installer preserves workspaces, sync databases, credentials, and WebUI sessions; initially no project is active. After it starts Docker, run `hermes use PROJECT`. You do not need to re-share existing projects. Before updating manually customized Compose files, review the backed-up configuration. Use `./setup.sh --replace-compose --replace-launcher --no-start` only if you intend to start/recreate Docker separately: **until the running old container is recreated, it may still have access to all workspaces**.
 
 ## Management and updating
 
@@ -121,6 +141,10 @@ If `hermes` isn't found immediately after install, open a new terminal or run `e
 
 ## Tests
 
-The repository includes regression scripts from sync v9. Run them only in temporary directories (the scripts provide their own temp roots) and never point them at `~/Hermes` or real projects. Basic checks: `bash -n bootstrap.sh setup.sh doctor.sh update.sh manage.sh scripts/install-docker.sh`; `python3 -m py_compile cli/hermes_sync_v9.py`; `python3 tests/test_hermes_boot.py`; `python3 tests/test_hermes_stop.py`; `python3 tests/test_hermes_v9.py -q`.
+The repository includes regression scripts for the sync CLI. Run them only in temporary directories (the scripts provide their own temp roots) and never point them at `~/Hermes` or real projects. Basic checks: `bash -n bootstrap.sh setup.sh doctor.sh update.sh manage.sh scripts/install-docker.sh`; `python3 -m py_compile cli/hermes_sync.py`; `python3 tests/test_hermes_boot.py`; `python3 tests/test_hermes_stop.py`; `python3 tests/test_hermes_cli.py -q`; `python3 -m unittest tests/test_tools_environment.py`.
 
 This is a setup wrapper around two upstream projects, not a fork or reimplementation of Hermes Agent/WebUI. Check their current licenses and release documentation if redistributing images or modifying upstream code.
+
+## Repository naming and Git history
+
+Keep files under **stable paths** (`cli/hermes_sync.py`, `tests/test_hermes_sync.py`, etc.). Do not put release numbers in filenames. Git commits and optional Git tags express releases; newer versions modify the existing files in place instead of creating a `_v10.py`, `_v11.py`, ... each time.

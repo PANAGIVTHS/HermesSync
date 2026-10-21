@@ -17,6 +17,8 @@ services:
       HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui
       HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace/${HERMES_ACTIVE_PROJECT}
       HERMES_TOOLS_DIR: /opt/hermes-tools
+      # Bash evaluates this for terminal calls; no per-tool Compose edits.
+      BASH_ENV: /opt/hermes-tools/env.sh
     volumes:
       - type: bind
         source: ${HERMES_DATA_DIR}

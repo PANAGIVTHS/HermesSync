@@ -94,8 +94,23 @@ if [[ -e "$BIN_DIR/hermes-sync" || -L "$BIN_DIR/hermes-sync" ]]; then
 fi
 
 say 'Preparing isolated runtime directories'
-mkdir -p "$ROOT/data/.hermes" "$ROOT/workspaces" "$ROOT/sync/projects" "$ROOT/tools/bin" "$ROOT/tools/downloads" "$ROOT/tools/python-envs" "$ROOT/idle-workspace" "$CLI_HOME/bin" "$BIN_DIR"
+mkdir -p "$ROOT/data/.hermes" "$ROOT/workspaces" "$ROOT/sync/projects" "$ROOT/tools/bin" "$ROOT/tools/downloads" "$ROOT/tools/python-envs" "$ROOT/tools/jdks" "$ROOT/tools/caches/gradle" "$ROOT/tools/env.d" "$ROOT/idle-workspace" "$CLI_HOME/bin" "$BIN_DIR"
 chmod 700 "$ROOT/data/.hermes"
+# The tools environment is a user-managed persistent file; install only once.
+# Updates to the portable repo must not overwrite user customizations.
+if [[ -L "$ROOT/tools/env.sh" ]]; then
+  die "Refusing symlinked tools environment: $ROOT/tools/env.sh"
+elif [[ ! -e "$ROOT/tools/env.sh" ]]; then
+  cp -- "$HERE/tools/env.sh" "$ROOT/tools/env.sh"
+  chmod 644 "$ROOT/tools/env.sh"
+  pass 'Installed persistent tools environment'
+else
+  [[ -f "$ROOT/tools/env.sh" && ! -L "$ROOT/tools/env.sh" ]] || die 'tools/env.sh must be a regular file, not a symlink.'
+  say 'Keeping existing persistent tools environment'
+fi
+if [[ ! -e "$ROOT/tools/README.md" && ! -L "$ROOT/tools/README.md" ]]; then
+  cp -- "$HERE/tools/README.md" "$ROOT/tools/README.md"
+fi
 if [[ ! -e "$ROOT/.env" ]]; then
   # Container variables only; secrets and OAuth credentials are written by the WebUI.
   # Simple absolute paths are encoded with single quotes for Compose dotenv format.
@@ -182,7 +197,7 @@ if [[ ! -x "$VENV/bin/python" ]]; then
 fi
 "$VENV/bin/python" -m pip install --disable-pip-version-check -q -r "$HERE/requirements.txt"
 # Build a stable launcher with a correct absolute interpreter. Avoid sed/shebang issues.
-"$VENV/bin/python" - "$HERE/cli/hermes_sync_v9.py" "$CLI_TARGET" "$VENV/bin/python" <<'PY'
+"$VENV/bin/python" - "$HERE/cli/hermes_sync.py" "$CLI_TARGET" "$VENV/bin/python" <<'PY'
 from pathlib import Path
 import sys
 source, target, interpreter = map(Path, sys.argv[1:4])

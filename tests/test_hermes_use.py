@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).resolve().parent.parent / 'cli' / 'hermes_sync_v9.py'
+SCRIPT = Path(__file__).resolve().parent.parent / 'cli' / 'hermes_sync.py'
 COMPOSE = Path(__file__).resolve().parent.parent / 'docker' / 'compose.yaml'
 
 

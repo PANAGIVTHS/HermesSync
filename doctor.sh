@@ -25,6 +25,15 @@ fi
 for dir in "$ROOT/agent-src" "$ROOT/workspaces" "$ROOT/sync/projects" "$ROOT/data/.hermes" "$ROOT/tools" "$ROOT/idle-workspace"; do
   if [[ -d "$dir" ]]; then ok "Directory: $dir"; else no "Missing: $dir"; fi
 done
+if [[ -f "$ROOT/tools/env.sh" ]]; then
+  if HERMES_TOOLS_HOME="$ROOT/tools" BASH_ENV="$ROOT/tools/env.sh" bash -c        '[[ ":$PATH:" == *":$HERMES_TOOLS_HOME/bin:"* && "$GRADLE_USER_HOME" == "$HERMES_TOOLS_HOME/caches/gradle" ]]' >/dev/null 2>&1; then
+    ok 'Persistent tools environment loads in Bash'
+  else
+    no 'Persistent tools environment failed Bash startup check'
+  fi
+else
+  no 'Missing persistent tools env.sh'
+fi
 if [[ -f "$ROOT/.env" && -f "$ROOT/compose.yaml" ]]; then
   (cd "$ROOT" && docker compose config --quiet) >/dev/null 2>&1 && ok 'Compose configuration valid' || no 'Compose configuration invalid'
 else

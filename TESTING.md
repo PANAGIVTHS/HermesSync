@@ -1,15 +1,37 @@
-# Verification notes (Hermes Sync v9)
+# Verification notes
 
-- Shell syntax (`bash -n` for setup/management scripts): **PASS**.
-- Python syntax (`py_compile`): **PASS**.
-- `python3 tests/test_hermes_stop.py`: **6/6 passed**, with simulated Docker and disposable workspaces. Ensures stop only calls Compose stop, is repeatable, preserves files, rejects foreign containers, and reports errors without changing the version.
-- `python3 tests/test_hermes_boot.py`: **5/5 passed**, using a fake Docker executable and isolated disposable projects. Covers launching from an unrelated current directory, re-running `boot`, missing runtime, Docker failure, and another Compose project's existing container.
-- `python3 tests/test_hermes_v9.py -q`: **11/11 passed** (project CLI commands, isolation, purge safety).
-- `bash scripts/test-installer.sh` as a non-root user: **PASS** with disposable HOME, dummy local agent Git checkout, and simulated Docker. Confirms installer launches the app via `hermes boot`, backs up launchers, preserves existing data, protects Compose configuration, and does not touch the source `.git`.
-- One preexisting VS Code GUI test (`test_01_edit_proposal_pull_and_undo`) passed; an attempt to run the entire GUI suite was **inconclusive (execution timed out)**. The GUI/merge implementation is unchanged from v7; no claim of a full GUI suite pass is made for this build.
+All tests below use disposable project directories. These checks were performed
+for the stable-filename portable setup and persistent shared-tools environment.
 
-No real Docker daemon was run in this environment. The `boot` and `stop` commands was verified through a simulated Docker executable. Live Compose startup, WebUI health, and ChatGPT OAuth still require verification on the target machine. The upstream agent/image versions may change between installs because the installer defaults to upstream Git and `latest`.
+| Test | Result |
+|---|---:|
+| Core synchronization regression (quick, two batches) | 71/71 passed |
+| VS Code GUI proposal regression (simulated launcher) | 8/8 passed |
+| CLI/project and purge regression | 11/11 passed |
+| Docker boot simulations | 5/5 passed |
+| Docker stop simulations | 6/6 passed |
+| Active-project isolation / switching simulations | 8/8 passed |
+| Persistent tools environment (Bash -c / -lc, Gradle, JDK, env.d) | 7/7 passed |
+| Isolated portable installer with dummy agent Git checkout | Passed |
+| Shell syntax / Python compilation | Passed |
 
-## Active project mounting
+Total: **116/116 automated test cases passed**, plus the installer integration test.
 
-`python3 tests/test_hermes_use.py` uses simulated Docker to check project changes, no-project selection, rejection of symlinks, purge safety, rollback after Docker failure, and preservation of global tools. This does not replace a real container mount inspection. On a real installation use `docker inspect hermes-webui --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'` to verify only one path under `/workspace` is mounted.
+These tests do not launch a live Docker daemon or download the actual Hermes WebUI
+image. On a real machine, verify `hermes boot`, then run `./doctor.sh`, inspect
+Docker mounts and ask Hermes to run `command -v my-tool` after installing a test
+executable under `/opt/hermes-tools/bin`. Authentication cannot be tested without
+the user's approval.
+
+The tool environment itself is tested by actually launching Bash in noninteractive
+and login modes with `BASH_ENV` set. This validates shell semantics but not every
+upstream version's terminal startup behavior.
+
+CLI tests:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_tools_environment.py' -v
+python3 tests/test_hermes_sync_gui.py --sync cli/hermes_sync.py
+python3 tests/test_hermes_sync.py --sync cli/hermes_sync.py --quick --jobs 4
+bash scripts/test-installer.sh
+```
