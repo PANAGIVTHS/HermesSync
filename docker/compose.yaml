@@ -2,7 +2,7 @@
 name: hermes
 services:
   webui:
-    image: ${WEBUI_IMAGE:-ghcr.io/nesquena/hermes-webui:latest}
+    image: ${WEBUI_IMAGE:?Missing pinned WebUI image; run setup.sh}
     container_name: hermes-webui
     ports:
       - "127.0.0.1:${WEBUI_PORT:-8787}:8787"

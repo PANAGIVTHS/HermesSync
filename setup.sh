@@ -32,7 +32,7 @@ Options:
   --yes                Confirm replacement of an existing host 'hermes' launcher
   --replace-launcher   Back up and replace an existing host 'hermes' launcher
   --replace-compose    Back up and replace an existing ~/Hermes/compose.yaml
-  --update-agent       Fast-forward an existing agent-src checkout to upstream
+  --update-agent       Disabled when pinned (prevents unintentional upstream updates)
   --no-start           Install files without running Docker Compose
   --replace-soul       Back up and replace existing SOUL.md with template
   --replace-workflow   Back up and replace existing WORKFLOW.md with template
@@ -75,6 +75,14 @@ python3 - <<'PY' || die 'Python >=3.10 required'
 import sys
 assert sys.version_info >= (3, 10), sys.version
 PY
+# versions.lock is generated on the working desktop and committed to the repo.
+LOCK="$HERE/versions.lock"
+[[ -f "$LOCK" && ! -L "$LOCK" ]] || die "No versions.lock found. Run scripts/pin-current.sh on your working desktop and commit the generated file."
+AGENT_PIN="$(sed -n 's/^HERMES_AGENT_COMMIT=//p' "$LOCK")"
+WEBUI_PIN="$(sed -n 's/^WEBUI_IMAGE=//p' "$LOCK")"
+[[ "$AGENT_PIN" =~ ^[0-9a-f]{40}$ ]] || die 'Invalid pinned Agent SHA.'
+[[ "$WEBUI_PIN" =~ ^ghcr\.io/nesquena/hermes-webui@sha256:[0-9a-f]{64}$ ]] || die 'Invalid pinned WebUI digest.'
+(( ! UPDATE_AGENT )) || die 'Automatic upstream updates disabled for pinned installs. Update the lock only after testing a new version.'
 IFS=. read -r git_major git_minor _ < <(git version | awk '{print $3}')
 if ((git_major < 2 || (git_major == 2 && git_minor < 38))); then
   die 'Git >= 2.38 required by the private sync engine.'
@@ -132,13 +140,47 @@ HERMES_ACTIVE_PROJECT=_inactive
 HERMES_ACTIVE_WORKSPACE='$ROOT/idle-workspace'
 HERMES_TOOLS_HOME='$ROOT/tools'
 WEBUI_PORT=8787
-WEBUI_IMAGE=ghcr.io/nesquena/hermes-webui:latest
+WEBUI_IMAGE=$WEBUI_PIN
 ENV
   )
   pass 'Created private ~/Hermes/.env'
 else
   say 'Keeping existing ~/Hermes/.env'
 fi
+# Keep other .env keys, and backup only when the pinned WebUI value changes.
+python3 - "$ROOT/.env" "$WEBUI_PIN" <<'PY_PIN_ENV'
+from pathlib import Path
+from datetime import datetime
+import os, sys
+p, pin = Path(sys.argv[1]), sys.argv[2]
+original = p.read_text()
+lines = original.splitlines(keepends=True)
+found = False
+for n, line in enumerate(lines):
+    if line.startswith('WEBUI_IMAGE='):
+        if found:
+            raise SystemExit('Duplicate WEBUI_IMAGE in runtime .env')
+        found = True
+        lines[n] = f'WEBUI_IMAGE={pin}\n'
+if not found:
+    lines.append(('' if not original or original.endswith('\n') else '\n') + f'WEBUI_IMAGE={pin}\n')
+updated = ''.join(lines)
+if updated != original:
+    backup = p.with_name('.env.before-pin.' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
+    backup.write_text(original)
+    backup.chmod(0o600)
+    tmp = p.with_name('.env.pinned-tmp')
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(updated)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    finally:
+        tmp.unlink(missing_ok=True)
+    print('Pinned WebUI image in .env (previous .env backed up).')
+PY_PIN_ENV
 # One-time migration of v8 installs: preserve unrelated .env settings and any
 # selected project. Never default to mounting the entire projects directory.
 python3 - "$ROOT/.env" "$ROOT" <<'PYENV'
@@ -183,18 +225,17 @@ else
 fi
 
 if [[ ! -e "$ROOT/agent-src" ]]; then
-  say 'Downloading Hermes Agent SOURCE (for Docker; not installed natively)'
-  git clone --depth 1 "${HERMES_AGENT_GIT_URL:-https://github.com/NousResearch/hermes-agent.git}" "$ROOT/agent-src"
+  say 'Fetching pinned Hermes Agent commit only (shallow)'
+  git init -q "$ROOT/agent-src"
+  git -C "$ROOT/agent-src" remote add origin "${HERMES_AGENT_GIT_URL:-https://github.com/NousResearch/hermes-agent.git}"
+  git -C "$ROOT/agent-src" fetch --no-tags --depth 1 origin "$AGENT_PIN"
+  git -C "$ROOT/agent-src" -c advice.detachedHead=false checkout --detach -q "$AGENT_PIN"
 elif [[ -d "$ROOT/agent-src/.git" ]]; then
-  if (( UPDATE_AGENT )); then
-    say 'Updating Docker agent source (fast-forward only)'
-    [[ -z "$(git -C "$ROOT/agent-src" status --porcelain)" ]] || die 'Agent source checkout has local modifications. Refusing to update.'
-    git -C "$ROOT/agent-src" pull --ff-only
-  else
-    say 'Keeping existing Docker agent source checkout'
-  fi
+  actual_sha="$(git -C "$ROOT/agent-src" rev-parse HEAD)"
+  [[ "$actual_sha" == "$AGENT_PIN" ]] || die "Current agent commit $actual_sha differs from pinned $AGENT_PIN. No agent files have been changed."
+  say 'Keeping exact pinned Hermes Agent commit'
 else
-  die "$ROOT/agent-src exists but is not a normal Git checkout. Inspect manually."
+  die "$ROOT/agent-src is not a Git checkout. Inspect manually."
 fi
 
 say 'Preparing isolated Python virtual environment for host sync CLI'
@@ -262,7 +303,7 @@ if docker inspect hermes-webui >/dev/null 2>&1; then
     die "Existing hermes-webui container belongs to $origin, not $ROOT. Stop and review it manually first."
   fi
 fi
-(cd "$ROOT" && docker compose pull)
+(cd "$ROOT" && docker compose pull webui)
 "$BIN_DIR/hermes" boot
 pass 'Docker services started (first boot can take several minutes to initialize Python dependencies)'
 printf '\nOpen WebUI: http://localhost:8787\n'

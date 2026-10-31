@@ -2,9 +2,12 @@
 # Offline-safe integration test: isolated HOME, local dummy agent git source,
 # no Docker, no modifications to the actual user's ~/.local or ~/Hermes.
 set -Eeuo pipefail
-HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SOURCE_HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TMP="$(mktemp -d -t hermes-installer-test.XXXXXXXX)"
 trap 'rm -rf -- "$TMP"' EXIT
+# Install-test uses a private copy because versions.lock belongs to the repo itself.
+cp -a "$SOURCE_HERE" "$TMP/setup-repo"
+HERE="$TMP/setup-repo"
 export HOME="$TMP/home"
 mkdir -p "$HOME" "$TMP/dummy-agent" "$TMP/source"
 # Ensure no inherited user CLI and give our virtual env access to preinstalled Rich.
@@ -27,6 +30,15 @@ git -C "$TMP/dummy-agent" init -q
 git -C "$TMP/dummy-agent" add .
 git -C "$TMP/dummy-agent" -c user.name=Test -c user.email=test@example.invalid commit -qm initial
 export HERMES_AGENT_GIT_URL="$TMP/dummy-agent"
+# The fake source commit is the exact pinned commit for the isolated test.
+agent_sha="$(git -C "$TMP/dummy-agent" rev-parse HEAD)"
+printf 'HERMES_AGENT_COMMIT=%s\nWEBUI_IMAGE=ghcr.io/nesquena/hermes-webui@sha256:%064d\n' "$agent_sha" 0 > "$HERE/versions.lock"
+# replace the placeholder decimal digits with valid lowercase hex.
+python3 - "$HERE/versions.lock" <<'PY_FIX_TEST_PIN'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text(); s=s.replace('sha256:'+('0'*64), 'sha256:'+('a'*64)); p.write_text(s)
+PY_FIX_TEST_PIN
 # Pre-existing launcher must NOT be overwritten by default.
 mkdir -p "$HOME/.local/bin"
 printf '#!/bin/sh\necho ORIGINAL-HERMES\n' > "$HOME/.local/bin/hermes"

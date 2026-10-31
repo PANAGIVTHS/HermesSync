@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update host CLI + Dockerized Hermes Agent/WebUI. Verify the Skills API afterwards.
+# Reapply pinned host CLI and Dockerized Hermes Agent/WebUI. Verify Skills API afterwards.
 # Never removes persisted skills, workspaces, credentials, or synchronization state.
 set -Eeuo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -10,10 +10,10 @@ for arg in "$@"; do
   [[ "$arg" == --no-start ]] && no_start=1
 done
 
-# setup.sh safely fast-forwards agent source, pulls WebUI's latest image,
-# and recreates the WebUI container if the image or Compose configuration changed.
+# setup.sh verifies pinned Agent source, pulls only the locked WebUI digest,
+# and recreates the WebUI container only if its configuration/image changed.
 # Use --replace-workflow explicitly when you also want the repo's updated guidance.
-"$HERE/setup.sh" --replace-compose --update-agent "$@"
+"$HERE/setup.sh" --replace-compose "$@"
 
 # --no-start is used for offline/controlled maintenance. No running WebUI to check.
 if (( no_start )); then

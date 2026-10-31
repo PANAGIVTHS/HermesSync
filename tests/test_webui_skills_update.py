@@ -58,7 +58,7 @@ class WebUISkillsUpdateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Skills API is healthy', result.stdout)
         self.assertEqual(self.log.read_text().splitlines(),
-                         ['--replace-compose', '--update-agent', '--replace-workflow'])
+                         ['--replace-compose', '--replace-workflow'])
 
     def test_http_500_fails_with_diagnostics(self):
         result = self.run_update('500')
@@ -71,7 +71,7 @@ class WebUISkillsUpdateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('skipped (--no-start)', result.stdout)
         self.assertEqual(self.log.read_text().splitlines(),
-                         ['--replace-compose', '--update-agent', '--no-start'])
+                         ['--replace-compose', '--no-start'])
 
 
 if __name__ == '__main__':

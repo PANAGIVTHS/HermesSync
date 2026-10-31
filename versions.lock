@@ -1,0 +1,3 @@
+# Generated on working desktop; no credentials.
+HERMES_AGENT_COMMIT=fd905d2926933a74a1f33ca6c8598992ea757ccb
+WEBUI_IMAGE=ghcr.io/nesquena/hermes-webui@sha256:b638ed51e0dc898a4aa0cb1d770d7938db06ea14fc80398fc951c9453241aee2

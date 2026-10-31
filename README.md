@@ -2,8 +2,16 @@
 
 **Docker-only Hermes Agent + Hermes WebUI**, with a separate host-side `hermes` synchronization CLI (Rich). The sync tool never commits to, stages, or copies your original project's `.git` directory. No native Hermes Agent is installed.
 
-Test target: Linux (Ubuntu/Arch), Git ≥2.38, Docker Engine + Compose v2, Python ≥3.10, Internet for initial downloads. Docker `ghcr.io/nesquena/hermes-webui:latest` image and fresh `NousResearch/hermes-agent` source are fetched at setup time.
+Test target: Linux (Ubuntu/Arch), Git ≥2.38, Docker Engine + Compose v2, Python ≥3.10, Internet for initial downloads. The pinned Agent commit and WebUI image digest from `versions.lock` are installed at setup time.
 
+
+## Pinned upstream versions
+
+Run `./scripts/pin-current.sh` on the desktop with your currently running Agent/WebUI to create `versions.lock` with the exact Hermes Agent commit and the **registry digest of the running WebUI image**. The script also updates only `WEBUI_IMAGE` in private `~/Hermes/.env`, backing up the original. It does **not** restart Docker or modify project files, credentials or private sync history. Commit the generated **`versions.lock`** along with these setup source changes—never commit `.env` or `auth.json`.
+
+The installer requires `versions.lock`, installs the pinned WebUI image, and fetches the specified Agent commit with shallow Git. `./update.sh` reapplies these exact pins; it no longer fast-forwards Hermes Agent or follows WebUI `latest`. If an existing Agent checkout differs, setup stops rather than overwriting it. To intentionally upgrade Hermes, test a new Agent/WebUI combination separately and capture new pins.
+
+**Pinning does not repair an existing mismatch or the broken Skills page.** It only freezes the revisions you're currently running.
 
 ## Synchronization and `.gitignore`
 
@@ -216,7 +224,7 @@ If generated caches are still listed, check whether they were already included i
 ./update.sh            # Refresh agent source, WebUI image, host CLI and Compose template
 ```
 
-Updating fetches the current upstream agent and WebUI; if a breaking upstream change occurs, inspect logs. For truly reproducible versions, set a pinned image tag in `~/Hermes/.env` and checkout a pinned agent source ref under `~/Hermes/agent-src` (disable update-agent during maintenance). Version compatibility is controlled upstream and not guaranteed across arbitrary combinations.
+Updating reapplies the exact versions in `versions.lock`; it does not move Hermes Agent or WebUI to new upstream revisions. Change the lock only after separately testing another combination.
 
 ### Existing installation precautions
 
