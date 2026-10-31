@@ -81,6 +81,34 @@ If you customize `WORKFLOW.md` directly, rerun `./setup.sh --no-start` to apply 
 
 **Security note:** These are agent instructions, not a sandbox. Actual per-project filesystem separation still comes from Docker's active-project mount. The agent can access its persistent shared tools and its own runtime state.
 
+## Reusable agent skills and scripts
+
+Hermes already has built-in skill authoring (`skill_manage`); no extra skill-creation plugin is required. Reusable cross-project scripts belong under `/opt/hermes-tools/bin/` and helper files under `/opt/hermes-tools/scripts/`, while persistent skills belong under `~/Hermes/data/.hermes/skills/` on the host. Both survive active-project switches and are outside synchronization. The agent is instructed to consult existing skills/scripts before automating repeated jobs, capture useful procedures as skills, verify new scripts, and keep terminal output concise.
+
+On an existing installation, update the operating rules safely (without touching any project or running a sync):
+
+```bash
+./setup.sh --no-start --replace-workflow
+hermes stop
+hermes boot
+```
+
+Only run the stop/boot sequence between agent tasks. This refreshes the marked `agent.system_prompt` block while preserving OAuth credentials, model configuration, workspaces and private sync history. Existing personalized `WORKFLOW.md` is backed up before replacement, so review the new template first.
+
+### WebUI Skills panel shows HTTP 500 (`_sort_skills` import error)
+
+Your skill files are still stored under `~/Hermes/data/.hermes/skills/`. An HTTP 500 with `ImportError: cannot import name '_sort_skills'` is a **WebUI/Agent version mismatch**, not lost skills. Current upstream WebUI resolves both `sort_skills` and `_sort_skills`; we do not patch upstream source or create duplicate skills.
+
+Finish active agent work. Ensure `git -C ~/Hermes/agent-src status --short` prints nothing, then run from this **setup repository**:
+
+```bash
+./update.sh --replace-workflow
+```
+
+This safely fast-forwards the Docker Agent source, pulls and starts the current WebUI image, applies the updated reusable-automation guidance (backing up your customized `WORKFLOW.md`), and verifies `/api/skills` returns HTTP 200. It preserves the existing `~/Hermes/data/.hermes/skills/` directory, OAuth configuration, conversations, tools, project workspaces and private sync history. It does **not** synchronize projects or modify their Git history.
+
+To update software **without** replacing your existing workflow rules, use `./update.sh`. To only apply the workflow guidance without restarting Docker, use `./setup.sh --no-start --replace-workflow` and restart Hermes between tasks. On persistent HTTP 500, inspect `docker compose -f ~/Hermes/compose.yaml logs --tail=100 webui` rather than deleting skills or changing Hermes Agent source by hand. A rolling upstream `latest` image still carries version-compatibility risk.
+
 ## Docker startup
 
 ```bash

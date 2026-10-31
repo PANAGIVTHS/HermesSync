@@ -85,6 +85,15 @@ PYMOUNT
   if command -v curl >/dev/null 2>&1; then
     if curl --max-time 5 -fsS http://127.0.0.1:8787/health >/dev/null 2>&1; then
       ok 'WebUI HTTP health endpoint responds'
+      # Skills live in persistent state. An HTTP 500 usually indicates a WebUI/Agent
+      # API mismatch rather than missing skills (e.g. renamed _sort_skills).
+      skills_code="$(curl --silent --max-time 8 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8787/api/skills 2>/dev/null || true)"
+      if [[ "$skills_code" == 200 ]]; then
+        ok 'WebUI Skills API responds (HTTP 200)'
+      else
+        no "WebUI Skills API failed (HTTP ${skills_code:-unavailable})"
+        info 'Check the WebUI logs; run ./update.sh between tasks to refresh compatible components.'
+      fi
       # Never display token or config contents.
       curl --max-time 8 -fsS http://127.0.0.1:8787/api/onboarding/status 2>/dev/null | python3 -c '
 import json,sys

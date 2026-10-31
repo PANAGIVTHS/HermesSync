@@ -37,6 +37,11 @@ class GuidanceTests(unittest.TestCase):
         self.assertEqual((self.home / 'WORKFLOW.md').read_text(), (REPO / 'agent/WORKFLOW.md').read_text())
         prompt = self.config()['agent']['system_prompt']
         self.assertIn('The user—not you—runs host-side review', prompt)
+        self.assertIn('## Reusable automation and skills', prompt)
+        self.assertIn('## Project files and synchronization exclusions', prompt)
+        self.assertIn('skill_manage', prompt)
+        self.assertIn('skill_manage', prompt)
+        self.assertIn('/opt/hermes-tools/bin/', prompt)
         self.assertEqual(prompt.count(BEGIN), 1)
         self.assertEqual(prompt.count(END), 1)
         self.assertFalse((self.home / 'AGENTS.md').exists())
